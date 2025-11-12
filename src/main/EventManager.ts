@@ -228,7 +228,7 @@ export class EventManager {
     if (this.mainWindow.topBar.view.webContents !== sender) {
       this.mainWindow.topBar.view.webContents.send(
         "dark-mode-updated",
-        isDarkMode
+        isDarkMode,
       );
     }
 
@@ -236,7 +236,7 @@ export class EventManager {
     if (this.mainWindow.sidebar.view.webContents !== sender) {
       this.mainWindow.sidebar.view.webContents.send(
         "dark-mode-updated",
-        isDarkMode
+        isDarkMode,
       );
     }
 

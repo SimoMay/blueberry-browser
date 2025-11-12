@@ -10,7 +10,7 @@ interface TabInfo {
 interface TopBarAPI {
   // Tab management
   createTab: (
-    url?: string
+    url?: string,
   ) => Promise<{ id: string; title: string; url: string } | null>;
   closeTab: (tabId: string) => Promise<boolean>;
   switchTab: (tabId: string) => Promise<boolean>;
@@ -36,4 +36,3 @@ declare global {
     topBarAPI: TopBarAPI;
   }
 }
-

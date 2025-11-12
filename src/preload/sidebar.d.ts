@@ -44,4 +44,3 @@ declare global {
     sidebarAPI: SidebarAPI;
   }
 }
-
