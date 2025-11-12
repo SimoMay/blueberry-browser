@@ -1,0 +1,524 @@
+import Database from "better-sqlite3";
+import { app } from "electron";
+import * as path from "path";
+import * as fs from "fs";
+import * as crypto from "crypto";
+import log from "electron-log";
+
+/**
+ * Migration definition for database schema versioning
+ */
+export interface Migration {
+  version: number;
+  up: string; // SQL for upgrade
+  down: string; // SQL for rollback
+}
+
+/**
+ * Database manager with encryption, migrations, and cleanup utilities
+ *
+ * Architecture decisions:
+ * - Uses better-sqlite3 for ACID transactions and synchronous API
+ * - Singleton pattern for single connection throughout app lifecycle
+ * - WAL mode enabled for concurrent reads
+ * - AES-256 encryption wrapper (custom implementation)
+ * - Migration system for schema versioning
+ * - Cleanup utilities for maintenance
+ */
+export class DatabaseManager {
+  private static instance: DatabaseManager | null = null;
+  private db: Database.Database | null = null;
+  private readonly dbPath: string;
+  private readonly encryptionKeyPath: string;
+  private encryptionKey: Buffer | null = null;
+
+  /**
+   * Private constructor for singleton pattern
+   * Never hardcode paths - always use app.getPath('userData')
+   */
+  private constructor() {
+    const userDataPath = app.getPath("userData");
+    this.dbPath = path.join(userDataPath, "blueberry-data.db");
+    this.encryptionKeyPath = path.join(userDataPath, ".encryption-key");
+
+    log.info("[Database] Database path:", this.dbPath);
+  }
+
+  /**
+   * Get singleton instance
+   */
+  public static getInstance(): DatabaseManager {
+    if (!DatabaseManager.instance) {
+      DatabaseManager.instance = new DatabaseManager();
+    }
+    return DatabaseManager.instance;
+  }
+
+  /**
+   * Initialize database connection with encryption and migrations
+   */
+  public async initialize(): Promise<void> {
+    try {
+      log.info("[Database] Initializing database...");
+
+      // Load or generate encryption key
+      this.loadOrGenerateEncryptionKey();
+
+      // Create database connection
+      this.db = new Database(this.dbPath, {
+        verbose: (message) => log.debug("[Database SQL]", message),
+      });
+
+      // Enable WAL mode for concurrent reads
+      this.db.pragma("journal_mode = WAL");
+      log.info("[Database] WAL mode enabled");
+
+      // Run migrations
+      this.runMigrations();
+
+      log.info("[Database] Database initialized successfully");
+    } catch (error) {
+      log.error("[Database] Initialization failed:", error);
+      throw {
+        code: "DB_INIT_ERROR",
+        message: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+
+  /**
+   * Load or generate AES-256 encryption key
+   * Key is stored in userData directory (never committed to git)
+   */
+  private loadOrGenerateEncryptionKey(): void {
+    try {
+      if (fs.existsSync(this.encryptionKeyPath)) {
+        // Load existing key
+        this.encryptionKey = fs.readFileSync(this.encryptionKeyPath);
+        log.info("[Database] Loaded existing encryption key");
+      } else {
+        // Generate new key (32 bytes = 256 bits)
+        this.encryptionKey = crypto.randomBytes(32);
+        fs.writeFileSync(this.encryptionKeyPath, this.encryptionKey, {
+          mode: 0o600,
+        });
+        log.info("[Database] Generated new encryption key");
+      }
+    } catch (error) {
+      log.error("[Database] Encryption key handling failed:", error);
+      throw {
+        code: "DB_ENCRYPTION_ERROR",
+        message:
+          error instanceof Error ? error.message : "Encryption key error",
+      };
+    }
+  }
+
+  /**
+   * Encrypt sensitive data before storage
+   */
+  public encrypt(data: string): string {
+    if (!this.encryptionKey) {
+      throw {
+        code: "DB_ENCRYPTION_ERROR",
+        message: "Encryption key not loaded",
+      };
+    }
+
+    try {
+      const iv = crypto.randomBytes(16);
+      const cipher = crypto.createCipheriv(
+        "aes-256-cbc",
+        this.encryptionKey,
+        iv,
+      );
+      let encrypted = cipher.update(data, "utf8", "hex");
+      encrypted += cipher.final("hex");
+
+      // Prepend IV to encrypted data (needed for decryption)
+      return iv.toString("hex") + ":" + encrypted;
+    } catch (error) {
+      log.error("[Database] Encryption failed:", error);
+      throw {
+        code: "DB_ENCRYPTION_ERROR",
+        message: error instanceof Error ? error.message : "Encryption failed",
+      };
+    }
+  }
+
+  /**
+   * Decrypt sensitive data after retrieval
+   */
+  public decrypt(encryptedData: string): string {
+    if (!this.encryptionKey) {
+      throw {
+        code: "DB_ENCRYPTION_ERROR",
+        message: "Encryption key not loaded",
+      };
+    }
+
+    try {
+      const parts = encryptedData.split(":");
+      if (parts.length !== 2) {
+        throw new Error("Invalid encrypted data format");
+      }
+
+      const iv = Buffer.from(parts[0], "hex");
+      const encrypted = parts[1];
+
+      const decipher = crypto.createDecipheriv(
+        "aes-256-cbc",
+        this.encryptionKey,
+        iv,
+      );
+      let decrypted = decipher.update(encrypted, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+
+      return decrypted;
+    } catch (error) {
+      log.error("[Database] Decryption failed:", error);
+      throw {
+        code: "DB_DECRYPTION_ERROR",
+        message: error instanceof Error ? error.message : "Decryption failed",
+      };
+    }
+  }
+
+  /**
+   * Run database migrations
+   * Migrations are version-tracked in schema_migrations table
+   */
+  private runMigrations(): void {
+    if (!this.db) {
+      throw { code: "DB_NOT_INITIALIZED", message: "Database not initialized" };
+    }
+
+    try {
+      // Create migrations tracking table if not exists
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version INTEGER PRIMARY KEY,
+          applied_at INTEGER NOT NULL
+        )
+      `);
+
+      // Get current schema version
+      const currentVersion = this.getCurrentSchemaVersion();
+      log.info("[Database] Current schema version:", currentVersion);
+
+      // Get all migrations
+      const migrations = this.getMigrations();
+
+      // Apply pending migrations
+      for (const migration of migrations) {
+        if (migration.version > currentVersion) {
+          log.info(`[Database] Applying migration v${migration.version}...`);
+
+          this.db.exec(migration.up);
+
+          // Record migration
+          const stmt = this.db.prepare(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+          );
+          stmt.run(migration.version, Date.now());
+
+          log.info(
+            `[Database] Migration v${migration.version} applied successfully`,
+          );
+        }
+      }
+    } catch (error) {
+      log.error("[Database] Migration failed:", error);
+      throw {
+        code: "DB_MIGRATION_ERROR",
+        message: error instanceof Error ? error.message : "Migration failed",
+      };
+    }
+  }
+
+  /**
+   * Get current schema version from migrations table
+   */
+  private getCurrentSchemaVersion(): number {
+    if (!this.db) {
+      return 0;
+    }
+
+    try {
+      const row = this.db
+        .prepare("SELECT MAX(version) as version FROM schema_migrations")
+        .get() as { version: number | null };
+
+      return row.version ?? 0;
+    } catch {
+      // Table doesn't exist yet
+      return 0;
+    }
+  }
+
+  /**
+   * Define all database migrations
+   * Each migration includes upgrade (up) and rollback (down) SQL
+   */
+  private getMigrations(): Migration[] {
+    return [
+      {
+        version: 1,
+        up: `
+          -- Epic 1: Pattern Detection and Automation
+          CREATE TABLE patterns (
+            id TEXT PRIMARY KEY,
+            pattern_type TEXT NOT NULL,
+            selector_path TEXT NOT NULL,
+            occurrence_count INTEGER DEFAULT 1,
+            confidence_score REAL NOT NULL,
+            domain TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            last_seen_at INTEGER NOT NULL,
+            metadata TEXT
+          );
+
+          CREATE INDEX idx_patterns_domain ON patterns(domain);
+          CREATE INDEX idx_patterns_type ON patterns(pattern_type);
+
+          CREATE TABLE automations (
+            id TEXT PRIMARY KEY,
+            pattern_id TEXT NOT NULL,
+            automation_type TEXT NOT NULL,
+            script_content TEXT NOT NULL,
+            enabled INTEGER DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            last_executed_at INTEGER,
+            execution_count INTEGER DEFAULT 0,
+            FOREIGN KEY (pattern_id) REFERENCES patterns(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX idx_automations_pattern ON automations(pattern_id);
+
+          -- Epic 2: Page Monitoring System
+          CREATE TABLE monitors (
+            id TEXT PRIMARY KEY,
+            url TEXT NOT NULL,
+            selector TEXT NOT NULL,
+            schedule_cron TEXT NOT NULL,
+            enabled INTEGER DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            last_checked_at INTEGER,
+            UNIQUE(url, selector)
+          );
+
+          CREATE INDEX idx_monitors_url ON monitors(url);
+
+          CREATE TABLE snapshots (
+            id TEXT PRIMARY KEY,
+            monitor_id TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            html_content TEXT NOT NULL,
+            captured_at INTEGER NOT NULL,
+            FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX idx_snapshots_monitor ON snapshots(monitor_id);
+          CREATE INDEX idx_snapshots_captured_at ON snapshots(captured_at);
+
+          CREATE TABLE monitor_alerts (
+            id TEXT PRIMARY KEY,
+            monitor_id TEXT NOT NULL,
+            snapshot_id TEXT NOT NULL,
+            change_summary TEXT NOT NULL,
+            llm_analysis TEXT,
+            severity TEXT NOT NULL,
+            notified INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE,
+            FOREIGN KEY (snapshot_id) REFERENCES snapshots(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX idx_alerts_monitor ON monitor_alerts(monitor_id);
+          CREATE INDEX idx_alerts_severity ON monitor_alerts(severity);
+
+          -- Epic 4: Preview API Workflow System
+          CREATE TABLE workflows (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            created_at INTEGER NOT NULL,
+            last_executed_at INTEGER,
+            execution_count INTEGER DEFAULT 0
+          );
+
+          CREATE TABLE workflow_steps (
+            id TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            step_number INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            action_params TEXT NOT NULL,
+            preview_required INTEGER DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX idx_workflow_steps_workflow ON workflow_steps(workflow_id);
+
+          CREATE TABLE audit_logs (
+            id TEXT PRIMARY KEY,
+            workflow_id TEXT,
+            step_id TEXT,
+            action_type TEXT NOT NULL,
+            action_params TEXT NOT NULL,
+            preview_image TEXT,
+            approved INTEGER NOT NULL,
+            executed_at INTEGER NOT NULL,
+            result TEXT,
+            FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE SET NULL,
+            FOREIGN KEY (step_id) REFERENCES workflow_steps(id) ON DELETE SET NULL
+          );
+
+          CREATE INDEX idx_audit_logs_workflow ON audit_logs(workflow_id);
+          CREATE INDEX idx_audit_logs_executed_at ON audit_logs(executed_at);
+
+          -- Epic 5: Data Analysis Toolkit
+          CREATE TABLE execution_cache (
+            id TEXT PRIMARY KEY,
+            input_hash TEXT NOT NULL,
+            code TEXT NOT NULL,
+            result TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            accessed_at INTEGER NOT NULL,
+            access_count INTEGER DEFAULT 1,
+            UNIQUE(input_hash)
+          );
+
+          CREATE INDEX idx_execution_cache_accessed ON execution_cache(accessed_at);
+        `,
+        down: `
+          DROP TABLE IF EXISTS execution_cache;
+          DROP TABLE IF EXISTS audit_logs;
+          DROP TABLE IF EXISTS workflow_steps;
+          DROP TABLE IF EXISTS workflows;
+          DROP TABLE IF EXISTS monitor_alerts;
+          DROP TABLE IF EXISTS snapshots;
+          DROP TABLE IF EXISTS monitors;
+          DROP TABLE IF EXISTS automations;
+          DROP TABLE IF EXISTS patterns;
+        `,
+      },
+    ];
+  }
+
+  /**
+   * Cleanup old patterns (>30 days)
+   * Called periodically or on app quit
+   */
+  public cleanupOldPatterns(): void {
+    if (!this.db) {
+      log.warn("[Database] Cannot cleanup: database not initialized");
+      return;
+    }
+
+    try {
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const stmt = this.db.prepare(
+        "DELETE FROM patterns WHERE last_seen_at < ?",
+      );
+      const result = stmt.run(thirtyDaysAgo);
+
+      log.info(`[Database] Cleaned up ${result.changes} old patterns`);
+    } catch (error) {
+      log.error("[Database] Cleanup failed:", error);
+      throw {
+        code: "DB_CLEANUP_ERROR",
+        message: error instanceof Error ? error.message : "Cleanup failed",
+      };
+    }
+  }
+
+  /**
+   * Optimize database with VACUUM
+   * Reclaims unused space and defragments
+   */
+  public vacuum(): void {
+    if (!this.db) {
+      log.warn("[Database] Cannot vacuum: database not initialized");
+      return;
+    }
+
+    try {
+      log.info("[Database] Running VACUUM...");
+      this.db.exec("VACUUM");
+      log.info("[Database] VACUUM completed");
+    } catch (error) {
+      log.error("[Database] VACUUM failed:", error);
+      throw {
+        code: "DB_VACUUM_ERROR",
+        message: error instanceof Error ? error.message : "VACUUM failed",
+      };
+    }
+  }
+
+  /**
+   * Create database backup
+   * Returns backup file path
+   */
+  public backup(): string {
+    if (!this.db) {
+      throw { code: "DB_NOT_INITIALIZED", message: "Database not initialized" };
+    }
+
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backupPath = `${this.dbPath}.backup-${timestamp}`;
+
+      log.info("[Database] Creating backup:", backupPath);
+      this.db.backup(backupPath);
+      log.info("[Database] Backup created successfully");
+
+      return backupPath;
+    } catch (error) {
+      log.error("[Database] Backup failed:", error);
+      throw {
+        code: "DB_BACKUP_ERROR",
+        message: error instanceof Error ? error.message : "Backup failed",
+      };
+    }
+  }
+
+  /**
+   * Get database instance for queries
+   * Always use prepared statements to prevent SQL injection
+   */
+  public getDatabase(): Database.Database {
+    if (!this.db) {
+      throw { code: "DB_NOT_INITIALIZED", message: "Database not initialized" };
+    }
+    return this.db;
+  }
+
+  /**
+   * Close database connection
+   * Called on app quit
+   */
+  public close(): void {
+    if (this.db) {
+      try {
+        log.info("[Database] Closing database connection...");
+
+        // Cleanup old patterns before closing
+        this.cleanupOldPatterns();
+
+        // Optimize database
+        this.vacuum();
+
+        this.db.close();
+        this.db = null;
+        log.info("[Database] Database connection closed");
+      } catch (error) {
+        log.error("[Database] Error closing database:", error);
+        throw {
+          code: "DB_CLOSE_ERROR",
+          message: error instanceof Error ? error.message : "Close failed",
+        };
+      }
+    }
+  }
+}
