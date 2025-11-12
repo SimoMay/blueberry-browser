@@ -6,6 +6,7 @@ import { EventManager } from "./EventManager";
 import { DatabaseManager } from "./database/Database";
 import { PreferencesStore } from "./store/PreferencesStore";
 import { NotificationManager } from "./NotificationManager";
+import { PatternManager } from "./PatternManager";
 import log from "electron-log";
 
 let mainWindow: Window | null = null;
@@ -13,6 +14,7 @@ let eventManager: EventManager | null = null;
 let menu: AppMenu | null = null;
 let database: DatabaseManager | null = null;
 let notificationManager: NotificationManager | null = null;
+let patternManager: PatternManager | null = null;
 
 // Export database and preferences for use in other modules
 export let db: DatabaseManager | null = null;
@@ -44,6 +46,11 @@ app.whenReady().then(async () => {
     notificationManager = NotificationManager.getInstance();
     await notificationManager.initialize();
     log.info("[App] Notification manager initialized successfully");
+
+    log.info("[App] Initializing pattern manager...");
+    patternManager = PatternManager.getInstance();
+    await patternManager.initialize();
+    log.info("[App] Pattern manager initialized successfully");
   } catch (error) {
     log.error("[App] Failed to initialize infrastructure:", error);
     // Continue anyway - UI can show error state
@@ -79,7 +86,7 @@ app.on("window-all-closed", () => {
   }
 });
 
-// Cleanup database and notification manager before app quits
+// Cleanup database and managers before app quits
 app.on("before-quit", async () => {
   if (notificationManager) {
     try {
@@ -89,6 +96,17 @@ app.on("before-quit", async () => {
       log.info("[App] Notification manager cleaned up successfully");
     } catch (error) {
       log.error("[App] Failed to cleanup notification manager:", error);
+    }
+  }
+
+  if (patternManager) {
+    try {
+      log.info("[App] Cleaning up pattern manager...");
+      await patternManager.cleanup();
+      patternManager = null;
+      log.info("[App] Pattern manager cleaned up successfully");
+    } catch (error) {
+      log.error("[App] Failed to cleanup pattern manager:", error);
     }
   }
 

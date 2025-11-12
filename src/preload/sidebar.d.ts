@@ -50,6 +50,31 @@ interface NotificationAPIResponse<T = unknown> {
   };
 }
 
+interface Pattern {
+  id: string;
+  type: "navigation" | "form" | "copy-paste";
+  pattern_data: string;
+  confidence: number;
+  created_at: number;
+}
+
+interface Automation {
+  id: string;
+  pattern_id: string;
+  name: string;
+  description?: string;
+  created_at: number;
+}
+
+interface PatternAPIResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 interface SidebarAPI {
   // Chat functionality
   sendChatMessage: (request: Partial<ChatRequest>) => Promise<void>;
@@ -88,6 +113,36 @@ interface SidebarAPI {
       title?: string;
       message?: string;
     }) => Promise<NotificationAPIResponse<Notification>>;
+  };
+
+  // Pattern detection functionality
+  pattern: {
+    track: (data: {
+      type: "navigation" | "form" | "copy-paste";
+      pattern_data: string;
+      confidence: number;
+    }) => Promise<PatternAPIResponse<Pattern>>;
+    getAll: (filters?: {
+      type?: "navigation" | "form" | "copy-paste";
+    }) => Promise<PatternAPIResponse<Pattern[]>>;
+    saveAutomation: (data: {
+      pattern_id: string;
+      name: string;
+      description?: string;
+    }) => Promise<PatternAPIResponse<Automation>>;
+    executeAutomation: (
+      automation_id: string,
+    ) => Promise<PatternAPIResponse<{ execution_result: string }>>;
+    onDetected: (callback: (pattern: Pattern) => void) => void;
+    removeDetectedListener: () => void;
+    onAutomationCompleted: (
+      callback: (result: {
+        automation_id: string;
+        success: boolean;
+        result: unknown;
+      }) => void,
+    ) => void;
+    removeAutomationCompletedListener: () => void;
   };
 }
 

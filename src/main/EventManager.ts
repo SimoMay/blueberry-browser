@@ -5,9 +5,18 @@ import {
   DismissNotificationSchema,
   GetNotificationsSchema,
 } from "./schemas/notificationSchemas";
+import { PatternManager } from "./PatternManager";
+import {
+  PatternTrackSchema,
+  PatternGetAllSchema,
+  SaveAutomationSchema,
+  ExecuteAutomationSchema,
+} from "./schemas/patternSchemas";
+import { z } from "zod";
 
 export class EventManager {
   private mainWindow: Window;
+  private rateLimiters: Map<string, number[]> = new Map();
 
   constructor(mainWindow: Window) {
     this.mainWindow = mainWindow;
@@ -23,6 +32,9 @@ export class EventManager {
 
     // Notification events
     this.handleNotificationEvents();
+
+    // Pattern events
+    this.handlePatternEvents();
 
     // Page content events
     this.handlePageContentEvents();
@@ -309,6 +321,168 @@ export class EventManager {
     });
   }
 
+  private handlePatternEvents(): void {
+    const patternManager = PatternManager.getInstance();
+
+    // Track pattern
+    ipcMain.handle("pattern:track", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:track", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = PatternTrackSchema.parse(data);
+
+        // Call PatternManager
+        return await patternManager.trackPattern(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Get all patterns
+    ipcMain.handle("pattern:get-all", async (_, filters) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:get-all", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation (optional filters)
+        const validated = filters
+          ? PatternGetAllSchema.parse(filters)
+          : undefined;
+
+        // Call PatternManager
+        return await patternManager.getAllPatterns(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Save automation
+    ipcMain.handle("pattern:save-automation", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:save-automation", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = SaveAutomationSchema.parse(data);
+
+        // Call PatternManager
+        return await patternManager.saveAutomation(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Execute automation
+    ipcMain.handle("pattern:execute", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:execute", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = ExecuteAutomationSchema.parse(data);
+
+        // Call PatternManager
+        return await patternManager.executeAutomation(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+  }
+
   private handlePageContentEvents(): void {
     // Get page content
     ipcMain.handle("get-page-content", async () => {
@@ -382,6 +556,21 @@ export class EventManager {
     });
   }
 
+  // Rate limiting helper
+  private checkRateLimit(channel: string, maxPerSecond: number): boolean {
+    const now = Date.now();
+    const calls = this.rateLimiters.get(channel) || [];
+    const recentCalls = calls.filter((time) => now - time < 1000);
+
+    if (recentCalls.length >= maxPerSecond) {
+      return false; // Rate limit exceeded
+    }
+
+    recentCalls.push(now);
+    this.rateLimiters.set(channel, recentCalls);
+    return true;
+  }
+
   // Broadcast notification to sidebar
   public broadcastNotification(notification: {
     id: string;
@@ -395,6 +584,38 @@ export class EventManager {
       "notification:show",
       notification,
     );
+  }
+
+  // Broadcast pattern detected event to sidebar
+  public broadcastPatternDetected(pattern: {
+    id: string;
+    type: string;
+    pattern_data: string;
+    confidence: number;
+    detected_at: number;
+  }): void {
+    // Security check: validate WebContents ID before sending
+    if (this.mainWindow.sidebar.view.webContents) {
+      this.mainWindow.sidebar.view.webContents.send(
+        "pattern:detected",
+        pattern,
+      );
+    }
+  }
+
+  // Broadcast automation completed event to sidebar
+  public broadcastAutomationCompleted(result: {
+    automation_id: string;
+    success: boolean;
+    result: unknown;
+  }): void {
+    // Security check: validate WebContents ID before sending
+    if (this.mainWindow.sidebar.view.webContents) {
+      this.mainWindow.sidebar.view.webContents.send(
+        "pattern:automation-completed",
+        result,
+      );
+    }
   }
 
   // Clean up event listeners

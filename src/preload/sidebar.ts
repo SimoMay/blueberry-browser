@@ -117,6 +117,49 @@ const sidebarAPI = {
       message?: string;
     }) => electronAPI.ipcRenderer.invoke("notification:create-test", input),
   },
+
+  // Pattern detection functionality
+  pattern: {
+    track: (data: {
+      type: "navigation" | "form" | "copy-paste";
+      pattern_data: string;
+      confidence: number;
+    }) => electronAPI.ipcRenderer.invoke("pattern:track", data),
+
+    getAll: (filters?: { type?: "navigation" | "form" | "copy-paste" }) =>
+      electronAPI.ipcRenderer.invoke("pattern:get-all", filters),
+
+    saveAutomation: (data: {
+      pattern_id: string;
+      name: string;
+      description?: string;
+    }) => electronAPI.ipcRenderer.invoke("pattern:save-automation", data),
+
+    executeAutomation: (automation_id: string) =>
+      electronAPI.ipcRenderer.invoke("pattern:execute", { automation_id }),
+
+    onDetected: (callback: (pattern: unknown) => void) => {
+      electronAPI.ipcRenderer.on("pattern:detected", (_, pattern) =>
+        callback(pattern),
+      );
+    },
+
+    removeDetectedListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("pattern:detected");
+    },
+
+    onAutomationCompleted: (callback: (result: unknown) => void) => {
+      electronAPI.ipcRenderer.on("pattern:automation-completed", (_, result) =>
+        callback(result),
+      );
+    },
+
+    removeAutomationCompletedListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners(
+        "pattern:automation-completed",
+      );
+    },
+  },
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to
