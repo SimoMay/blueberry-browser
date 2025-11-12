@@ -5,12 +5,14 @@ import { AppMenu } from "./Menu";
 import { EventManager } from "./EventManager";
 import { DatabaseManager } from "./database/Database";
 import { PreferencesStore } from "./store/PreferencesStore";
+import { NotificationManager } from "./NotificationManager";
 import log from "electron-log";
 
 let mainWindow: Window | null = null;
 let eventManager: EventManager | null = null;
 let menu: AppMenu | null = null;
 let database: DatabaseManager | null = null;
+let notificationManager: NotificationManager | null = null;
 
 // Export database and preferences for use in other modules
 export let db: DatabaseManager | null = null;
@@ -37,6 +39,11 @@ app.whenReady().then(async () => {
     log.info("[App] Initializing preferences store...");
     prefs = PreferencesStore.getInstance();
     log.info("[App] Preferences store initialized successfully");
+
+    log.info("[App] Initializing notification manager...");
+    notificationManager = NotificationManager.getInstance();
+    await notificationManager.initialize();
+    log.info("[App] Notification manager initialized successfully");
   } catch (error) {
     log.error("[App] Failed to initialize infrastructure:", error);
     // Continue anyway - UI can show error state
@@ -72,8 +79,19 @@ app.on("window-all-closed", () => {
   }
 });
 
-// Cleanup database before app quits
-app.on("before-quit", () => {
+// Cleanup database and notification manager before app quits
+app.on("before-quit", async () => {
+  if (notificationManager) {
+    try {
+      log.info("[App] Cleaning up notification manager...");
+      await notificationManager.cleanup();
+      notificationManager = null;
+      log.info("[App] Notification manager cleaned up successfully");
+    } catch (error) {
+      log.error("[App] Failed to cleanup notification manager:", error);
+    }
+  }
+
   if (database) {
     try {
       log.info("[App] Closing database connection...");

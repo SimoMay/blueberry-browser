@@ -28,6 +28,14 @@ interface TopBarAPI {
 
   // Sidebar
   toggleSidebar: () => Promise<void>;
+
+  // Notifications
+  getNotificationCount: () => Promise<{
+    success: boolean;
+    data?: number;
+    error?: string;
+  }>;
+  showNotifications: () => Promise<boolean>;
 }
 
 declare global {

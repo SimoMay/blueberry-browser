@@ -403,6 +403,29 @@ export class DatabaseManager {
           DROP TABLE IF EXISTS patterns;
         `,
       },
+      {
+        version: 2,
+        up: `
+          -- Story 1.2: Shared Notification System
+          CREATE TABLE notifications (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('pattern', 'monitor', 'system')),
+            severity TEXT NOT NULL CHECK(severity IN ('info', 'warning', 'error')),
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            data TEXT,
+            created_at INTEGER NOT NULL,
+            dismissed_at INTEGER
+          );
+
+          CREATE INDEX idx_notifications_created_at ON notifications(created_at);
+          CREATE INDEX idx_notifications_type ON notifications(type);
+          CREATE INDEX idx_notifications_dismissed ON notifications(dismissed_at);
+        `,
+        down: `
+          DROP TABLE IF EXISTS notifications;
+        `,
+      },
     ];
   }
 

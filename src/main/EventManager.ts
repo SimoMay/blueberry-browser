@@ -1,5 +1,10 @@
 import { ipcMain, WebContents } from "electron";
 import type { Window } from "./Window";
+import { NotificationManager } from "./NotificationManager";
+import {
+  DismissNotificationSchema,
+  GetNotificationsSchema,
+} from "./schemas/notificationSchemas";
 
 export class EventManager {
   private mainWindow: Window;
@@ -15,6 +20,9 @@ export class EventManager {
 
     // Sidebar events
     this.handleSidebarEvents();
+
+    // Notification events
+    this.handleNotificationEvents();
 
     // Page content events
     this.handlePageContentEvents();
@@ -150,10 +158,36 @@ export class EventManager {
   }
 
   private handleSidebarEvents(): void {
-    // Toggle sidebar
+    // Toggle sidebar - always shows chat when opening
     ipcMain.handle("toggle-sidebar", () => {
+      const wasVisible = this.mainWindow.sidebar.getIsVisible();
       this.mainWindow.sidebar.toggle();
       this.mainWindow.updateAllBounds();
+
+      // If sidebar was just opened (transitioned from hidden to visible), show chat
+      if (!wasVisible) {
+        this.mainWindow.sidebar.view.webContents.send("show-chat");
+      }
+      return true;
+    });
+
+    // Show notifications - toggles view if sidebar already open
+    ipcMain.handle("show-notifications", () => {
+      const isVisible = this.mainWindow.sidebar.getIsVisible();
+
+      if (!isVisible) {
+        // Sidebar is closed - open it and show notifications
+        this.mainWindow.sidebar.show();
+        this.mainWindow.updateAllBounds();
+        this.mainWindow.sidebar.view.webContents.send(
+          "show-notification-panel",
+        );
+      } else {
+        // Sidebar is already open - toggle between chat and notifications
+        this.mainWindow.sidebar.view.webContents.send(
+          "toggle-notification-view",
+        );
+      }
       return true;
     });
 
@@ -172,6 +206,106 @@ export class EventManager {
     // Get messages
     ipcMain.handle("sidebar-get-messages", () => {
       return this.mainWindow.sidebar.client.getMessages();
+    });
+  }
+
+  private handleNotificationEvents(): void {
+    const notificationManager = NotificationManager.getInstance();
+
+    // Get all notifications (optionally filtered by type)
+    ipcMain.handle("notification:get-all", async (_, input) => {
+      try {
+        const validInput = GetNotificationsSchema.parse(input || {});
+        const notifications = await notificationManager.getNotifications(
+          validInput.type,
+        );
+        return { success: true, data: notifications };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "NOTIF_FETCH_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Dismiss a notification
+    ipcMain.handle("notification:dismiss", async (_, input) => {
+      try {
+        const validInput = DismissNotificationSchema.parse(input);
+        await notificationManager.dismissNotification(
+          validInput.notificationId,
+        );
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "NOTIF_DISMISS_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Dismiss all notifications
+    ipcMain.handle("notification:dismiss-all", async () => {
+      try {
+        await notificationManager.dismissAll();
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "NOTIF_DISMISS_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Get unread count
+    ipcMain.handle("notification:get-unread-count", async () => {
+      try {
+        const count = await notificationManager.getUnreadCount();
+        return { success: true, data: count };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "NOTIF_FETCH_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Test notification creator (for development/testing)
+    ipcMain.handle("notification:create-test", async (_, input) => {
+      try {
+        const notification = await notificationManager.createNotification({
+          type: input.type || "system",
+          severity: input.severity || "info",
+          title: input.title || "Test Notification",
+          message: input.message || "This is a test notification",
+          data: input.data,
+        });
+
+        // Broadcast to sidebar
+        this.broadcastNotification(notification);
+
+        return { success: true, data: notification };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "NOTIF_CREATE_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
     });
   }
 
@@ -246,6 +380,21 @@ export class EventManager {
         tab.webContents.send("dark-mode-updated", isDarkMode);
       }
     });
+  }
+
+  // Broadcast notification to sidebar
+  public broadcastNotification(notification: {
+    id: string;
+    type: string;
+    severity: string;
+    title: string;
+    message: string;
+    created_at: number;
+  }): void {
+    this.mainWindow.sidebar.view.webContents.send(
+      "notification:show",
+      notification,
+    );
   }
 
   // Clean up event listeners

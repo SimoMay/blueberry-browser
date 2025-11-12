@@ -17,6 +17,13 @@ interface ChatResponse {
   isComplete: boolean;
 }
 
+interface ChatMessage {
+  id: string;
+  role: string;
+  content: string;
+  timestamp: number;
+}
+
 // Sidebar specific APIs
 const sidebarAPI = {
   // Chat functionality
@@ -31,9 +38,9 @@ const sidebarAPI = {
     electronAPI.ipcRenderer.on("chat-response", (_, data) => callback(data));
   },
 
-  onMessagesUpdated: (callback: (messages: any[]) => void) => {
+  onMessagesUpdated: (callback: (messages: ChatMessage[]) => void) => {
     electronAPI.ipcRenderer.on("chat-messages-updated", (_, messages) =>
-      callback(messages),
+      callback(messages as ChatMessage[]),
     );
   },
 
@@ -52,6 +59,64 @@ const sidebarAPI = {
 
   // Tab information
   getActiveTabInfo: () => electronAPI.ipcRenderer.invoke("get-active-tab-info"),
+
+  // Notification functionality
+  notifications: {
+    onReceive: (callback: (notification: unknown) => void) => {
+      electronAPI.ipcRenderer.on("notification:show", (_, notification) =>
+        callback(notification),
+      );
+    },
+
+    removeReceiveListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("notification:show");
+    },
+
+    onShowPanel: (callback: () => void) => {
+      electronAPI.ipcRenderer.on("show-notification-panel", () => callback());
+    },
+
+    removeShowPanelListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("show-notification-panel");
+    },
+
+    onShowChat: (callback: () => void) => {
+      electronAPI.ipcRenderer.on("show-chat", () => callback());
+    },
+
+    removeShowChatListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("show-chat");
+    },
+
+    onToggleView: (callback: () => void) => {
+      electronAPI.ipcRenderer.on("toggle-notification-view", () => callback());
+    },
+
+    removeToggleViewListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("toggle-notification-view");
+    },
+
+    getAll: (type?: string) =>
+      electronAPI.ipcRenderer.invoke("notification:get-all", { type }),
+
+    dismiss: (notificationId: string) =>
+      electronAPI.ipcRenderer.invoke("notification:dismiss", {
+        notificationId,
+      }),
+
+    dismissAll: () =>
+      electronAPI.ipcRenderer.invoke("notification:dismiss-all"),
+
+    getUnreadCount: () =>
+      electronAPI.ipcRenderer.invoke("notification:get-unread-count"),
+
+    createTest: (input?: {
+      type?: string;
+      severity?: string;
+      title?: string;
+      message?: string;
+    }) => electronAPI.ipcRenderer.invoke("notification:create-test", input),
+  },
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

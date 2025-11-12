@@ -30,6 +30,11 @@ const topBarAPI = {
 
   // Sidebar
   toggleSidebar: () => electronAPI.ipcRenderer.invoke("toggle-sidebar"),
+
+  // Notifications
+  getNotificationCount: () =>
+    electronAPI.ipcRenderer.invoke("notification:get-unread-count"),
+  showNotifications: () => electronAPI.ipcRenderer.invoke("show-notifications"),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

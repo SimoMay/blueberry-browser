@@ -134,3 +134,14 @@ logs/
 *.pem
 *.key
 *.cert
+
+# Mo
+.bmad
+.bmad-ephemeral
+docs/
+.cursor
+.claude
+.opencode
+.gemini
+.vscode
+CLAUDE.md
