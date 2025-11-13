@@ -103,8 +103,6 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
    */
   useEffect(() => {
     const handleNotification = (notification: Notification): void => {
-      console.log("[NotificationContext] Received notification:", notification);
-
       // Add to notifications list
       setNotifications((prev) => [notification, ...prev]);
 

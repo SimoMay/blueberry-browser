@@ -550,18 +550,28 @@ export class PatternRecognizer {
     const notificationPatterns = patterns.filter((p) => p.readyForNotification);
 
     for (const pattern of notificationPatterns) {
-      log.info("[PatternRecognizer] Pattern ready for notification:", {
-        id: pattern.id,
-        type: pattern.type,
-        confidence: pattern.confidence,
-        occurrenceCount: pattern.occurrenceCount,
-      });
-
       // Fetch complete pattern data from database
       const patternData = this.fetchPatternById(pattern.id);
 
       if (patternData && this.notificationManager && this.eventManager) {
         try {
+          // Check if notification already exists for this pattern (prevent duplicates)
+          const existingNotifications =
+            await this.notificationManager.getNotifications("pattern");
+          const alreadyNotified = existingNotifications.some((n) => {
+            try {
+              const data =
+                typeof n.data === "string" ? JSON.parse(n.data) : n.data;
+              return data?.id === pattern.id && !n.dismissed_at;
+            } catch {
+              return false;
+            }
+          });
+
+          if (alreadyNotified) {
+            continue;
+          }
+
           // Create notification through existing NotificationManager (Story 1.9 refactor)
           const notification =
             await this.notificationManager.createNotification({
@@ -572,15 +582,8 @@ export class PatternRecognizer {
               data: patternData as Record<string, unknown>, // Store pattern data as object
             });
 
-          log.info(
-            `[PatternRecognizer] Notification created for pattern ${pattern.id}`,
-          );
-
           // Broadcast notification to sidebar UI
           this.eventManager.broadcastNotification(notification);
-          log.info(
-            `[PatternRecognizer] Notification broadcast to sidebar for pattern ${pattern.id}`,
-          );
         } catch (error) {
           log.error("[PatternRecognizer] Error creating notification:", error);
         }
@@ -593,12 +596,6 @@ export class PatternRecognizer {
           "[PatternRecognizer] EventManager not set, cannot broadcast notification",
         );
       }
-    }
-
-    if (notificationPatterns.length > 0) {
-      log.info(
-        `[PatternRecognizer] ${notificationPatterns.length} pattern notification(s) broadcast`,
-      );
     }
   }
 
