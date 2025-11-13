@@ -1,6 +1,8 @@
 import Database from "better-sqlite3";
 import log from "electron-log";
 import { PatternType, NavigationPattern, FormPattern } from "./PatternManager";
+import { NotificationManager } from "./NotificationManager";
+import { EventManager } from "./EventManager";
 
 /**
  * Recognized pattern with confidence score and notification readiness
@@ -23,6 +25,8 @@ interface PatternRow {
   occurrence_count: number;
   confidence: number;
   dismissed: number;
+  first_seen?: number;
+  last_seen?: number;
 }
 
 /**
@@ -42,6 +46,8 @@ interface PatternRow {
 export class PatternRecognizer {
   private static instance: PatternRecognizer | null = null;
   private db: Database.Database | null = null;
+  private notificationManager: NotificationManager | null = null;
+  private eventManager: EventManager | null = null;
   private jobInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
@@ -72,6 +78,22 @@ export class PatternRecognizer {
       );
     }
     return PatternRecognizer.instance;
+  }
+
+  /**
+   * Set NotificationManager instance (for late binding after initialization)
+   */
+  public setNotificationManager(
+    notificationManager: NotificationManager,
+  ): void {
+    this.notificationManager = notificationManager;
+  }
+
+  /**
+   * Set EventManager instance (for late binding after initialization)
+   */
+  public setEventManager(eventManager: EventManager): void {
+    this.eventManager = eventManager;
   }
 
   /**
@@ -125,7 +147,7 @@ export class PatternRecognizer {
       this.updatePatternConfidence(allRecognized);
 
       // 6. Trigger notifications for patterns meeting threshold
-      this.triggerNotifications(allRecognized);
+      await this.triggerNotifications(allRecognized);
 
       // Performance metrics
       const duration = Date.now() - startTime;
@@ -472,12 +494,59 @@ export class PatternRecognizer {
   }
 
   /**
+   * Fetch complete pattern data from database by ID
+   * @param id Pattern ID to fetch
+   * @returns Pattern data with parsed JSON or null if not found
+   */
+  private fetchPatternById(id: string): {
+    id: string;
+    type: PatternType;
+    confidence: number;
+    occurrenceCount: number;
+    firstSeen?: number;
+    lastSeen?: number;
+    patternData: NavigationPattern | FormPattern;
+  } | null {
+    if (!this.db) {
+      log.error("[PatternRecognizer] Database not initialized");
+      return null;
+    }
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT id, type, pattern_data, confidence, occurrence_count, first_seen, last_seen
+        FROM patterns
+        WHERE id = ? AND dismissed = 0
+      `);
+
+      const row = stmt.get(id) as PatternRow | undefined;
+      if (row) {
+        return {
+          id: row.id,
+          type: row.type,
+          confidence: row.confidence,
+          occurrenceCount: row.occurrence_count,
+          firstSeen: row.first_seen,
+          lastSeen: row.last_seen,
+          patternData: JSON.parse(row.pattern_data),
+        };
+      }
+      return null;
+    } catch (error) {
+      log.error("[PatternRecognizer] Error fetching pattern by ID:", error);
+      return null;
+    }
+  }
+
+  /**
    * Trigger notifications for patterns meeting threshold
    * Patterns must have: occurrence_count >= 3 AND confidence > 70%
    *
    * @param patterns Recognized patterns to check for notification
    */
-  private triggerNotifications(patterns: RecognizedPattern[]): void {
+  private async triggerNotifications(
+    patterns: RecognizedPattern[],
+  ): Promise<void> {
     const notificationPatterns = patterns.filter((p) => p.readyForNotification);
 
     for (const pattern of notificationPatterns) {
@@ -488,15 +557,47 @@ export class PatternRecognizer {
         occurrenceCount: pattern.occurrenceCount,
       });
 
-      // TODO: Emit IPC event for notification (Story 1.9 - Sidebar Pattern Notifications)
-      // For now, just log - actual notification integration will be implemented in next story
-      // Expected IPC channel: notification:show
-      // Expected payload: { type: 'pattern', title: string, message: string, data: pattern }
+      // Fetch complete pattern data from database
+      const patternData = this.fetchPatternById(pattern.id);
+
+      if (patternData && this.notificationManager && this.eventManager) {
+        try {
+          // Create notification through existing NotificationManager (Story 1.9 refactor)
+          const notification =
+            await this.notificationManager.createNotification({
+              type: "pattern",
+              severity: "info",
+              title: "Pattern Detected",
+              message: `${pattern.type === "navigation" ? "Navigation" : "Form"} pattern detected with ${pattern.confidence.toFixed(0)}% confidence`,
+              data: patternData as Record<string, unknown>, // Store pattern data as object
+            });
+
+          log.info(
+            `[PatternRecognizer] Notification created for pattern ${pattern.id}`,
+          );
+
+          // Broadcast notification to sidebar UI
+          this.eventManager.broadcastNotification(notification);
+          log.info(
+            `[PatternRecognizer] Notification broadcast to sidebar for pattern ${pattern.id}`,
+          );
+        } catch (error) {
+          log.error("[PatternRecognizer] Error creating notification:", error);
+        }
+      } else if (patternData && !this.notificationManager) {
+        log.warn(
+          "[PatternRecognizer] NotificationManager not set, cannot create notification",
+        );
+      } else if (patternData && !this.eventManager) {
+        log.warn(
+          "[PatternRecognizer] EventManager not set, cannot broadcast notification",
+        );
+      }
     }
 
     if (notificationPatterns.length > 0) {
       log.info(
-        `[PatternRecognizer] ${notificationPatterns.length} patterns ready for notification (will be implemented in Story 1.9)`,
+        `[PatternRecognizer] ${notificationPatterns.length} pattern notification(s) broadcast`,
       );
     }
   }

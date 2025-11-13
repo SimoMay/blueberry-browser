@@ -279,6 +279,50 @@ export class PatternManager {
   }
 
   /**
+   * Dismiss a pattern to prevent future notifications
+   */
+  public async dismissPattern(
+    patternId: string,
+  ): Promise<IPCResponse<{ patternId: string }>> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      log.info("[PatternManager] Dismissing pattern:", patternId);
+
+      // Update pattern to set dismissed = 1
+      const stmt = this.db.prepare(`
+        UPDATE patterns
+        SET dismissed = 1
+        WHERE id = ?
+      `);
+
+      const result = stmt.run(patternId);
+
+      if (result.changes === 0) {
+        throw new Error("Pattern not found");
+      }
+
+      log.info("[PatternManager] Pattern dismissed successfully:", patternId);
+
+      return {
+        success: true,
+        data: { patternId },
+      };
+    } catch (error) {
+      log.error("[PatternManager] Dismiss pattern error:", error);
+      return {
+        success: false,
+        error: {
+          code: "DISMISS_ERROR",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      };
+    }
+  }
+
+  /**
    * Execute an automation
    * Execution logic will be implemented in Story 1.10
    */

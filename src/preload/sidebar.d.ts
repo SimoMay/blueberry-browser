@@ -36,7 +36,7 @@ interface Notification {
   severity: "info" | "warning" | "error";
   title: string;
   message: string;
-  data?: string;
+  data?: unknown;
   created_at: number;
   dismissed_at: number | null;
 }
@@ -156,6 +156,7 @@ interface SidebarAPI {
       name: string;
       description?: string;
     }) => Promise<PatternAPIResponse<Automation>>;
+    dismiss: (data: { patternId: string }) => Promise<PatternAPIResponse>;
     executeAutomation: (
       automation_id: string,
     ) => Promise<PatternAPIResponse<{ execution_result: string }>>;

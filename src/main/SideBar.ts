@@ -106,4 +106,8 @@ export class SideBar {
   getIsVisible(): boolean {
     return this.isVisible;
   }
+
+  openDevTools(): void {
+    this.webContentsView.webContents.openDevTools({ mode: "detach" });
+  }
 }

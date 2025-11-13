@@ -6,7 +6,7 @@ export interface Notification {
   severity: "info" | "warning" | "error";
   title: string;
   message: string;
-  data?: string;
+  data?: unknown;
   created_at: number;
   dismissed_at: number | null;
 }

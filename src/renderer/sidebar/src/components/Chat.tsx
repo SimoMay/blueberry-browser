@@ -6,6 +6,7 @@ import { ArrowUp, Plus } from "lucide-react";
 import { useChat } from "../contexts/ChatContext";
 import { cn } from "@common/lib/utils";
 import { Button } from "@common/components/Button";
+import { PatternNotification } from "./PatternNotification";
 
 interface Message {
   id: string;
@@ -307,7 +308,7 @@ export const Chat: React.FC = () => {
     <div className="flex flex-col h-full bg-background">
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto">
-        <div className="h-8 max-w-3xl mx-auto px-4">
+        <div className="h-8 max-w-3xl mx-auto px-4 flex items-center justify-between">
           {/* New Chat Button - Floating */}
           {messages.length > 0 && (
             <Button onClick={clearChat} title="Start new chat" variant="ghost">
@@ -315,6 +316,9 @@ export const Chat: React.FC = () => {
               New Chat
             </Button>
           )}
+
+          {/* Pattern Notification Badge */}
+          <PatternNotification />
         </div>
 
         <div className="pb-4 relative max-w-3xl mx-auto px-4">

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ChatProvider } from "./contexts/ChatContext";
 import { NotificationProvider } from "./contexts/NotificationContext";
+import { PatternProvider } from "./contexts/PatternContext";
 import { Chat } from "./components/Chat";
 import { NotificationPanel } from "./components/NotificationPanel";
 import { useDarkMode } from "@common/hooks/useDarkMode";
@@ -60,9 +61,11 @@ const SidebarContent: React.FC = () => {
 export const SidebarApp: React.FC = () => {
   return (
     <NotificationProvider>
-      <ChatProvider>
-        <SidebarContent />
-      </ChatProvider>
+      <PatternProvider>
+        <ChatProvider>
+          <SidebarContent />
+        </ChatProvider>
+      </PatternProvider>
     </NotificationProvider>
   );
 };

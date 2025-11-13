@@ -135,6 +135,9 @@ const sidebarAPI = {
       description?: string;
     }) => electronAPI.ipcRenderer.invoke("pattern:save-automation", data),
 
+    dismiss: (data: { patternId: string }) =>
+      electronAPI.ipcRenderer.invoke("pattern:dismiss", data),
+
     executeAutomation: (automation_id: string) =>
       electronAPI.ipcRenderer.invoke("pattern:execute", { automation_id }),
 

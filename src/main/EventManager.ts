@@ -453,6 +453,36 @@ export class EventManager {
       }
     });
 
+    // Dismiss pattern
+    ipcMain.handle(
+      "pattern:dismiss",
+      async (_, data: { patternId: string }) => {
+        try {
+          // Rate limiting
+          if (!this.checkRateLimit("pattern:dismiss", 50)) {
+            return {
+              success: false,
+              error: {
+                code: "RATE_LIMIT",
+                message: "Too many requests",
+              },
+            };
+          }
+
+          // Call PatternManager
+          return await patternManager.dismissPattern(data.patternId);
+        } catch (error) {
+          return {
+            success: false,
+            error: {
+              code: "UNKNOWN_ERROR",
+              message: error instanceof Error ? error.message : "Unknown error",
+            },
+          };
+        }
+      },
+    );
+
     // Execute automation
     ipcMain.handle("pattern:execute", async (_, data) => {
       try {
@@ -817,6 +847,7 @@ export class EventManager {
     title: string;
     message: string;
     created_at: number;
+    data?: unknown;
   }): void {
     this.mainWindow.sidebar.view.webContents.send(
       "notification:show",

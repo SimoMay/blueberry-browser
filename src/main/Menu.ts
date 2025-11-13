@@ -75,6 +75,14 @@ export class AppMenu {
             click: () => this.handleToggleDevTools(),
           },
           {
+            label: "Toggle Sidebar DevTools",
+            accelerator:
+              process.platform === "darwin"
+                ? "Shift+Alt+Command+I"
+                : "Ctrl+Shift+Alt+I",
+            click: () => this.handleToggleSidebarDevTools(),
+          },
+          {
             label: "Toggle Fullscreen",
             accelerator:
               process.platform === "darwin" ? "Ctrl+Command+F" : "F11",
@@ -135,6 +143,10 @@ export class AppMenu {
     if (this.mainWindow.activeTab) {
       this.mainWindow.activeTab.webContents.toggleDevTools();
     }
+  }
+
+  private handleToggleSidebarDevTools(): void {
+    this.mainWindow.sidebar.openDevTools();
   }
 
   private handleToggleFullscreen(): void {

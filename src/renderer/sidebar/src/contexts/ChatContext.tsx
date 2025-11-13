@@ -45,6 +45,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Helper function to extract text from content (handles both string and multimodal array)
+  const extractTextContent = (
+    content: string | Array<{ type: string; text?: string; image?: string }>,
+  ): string => {
+    if (typeof content === "string") {
+      return content;
+    }
+    // For multimodal content, extract and join all text parts
+    return content
+      .filter((part) => part.type === "text" && part.text)
+      .map((part) => part.text)
+      .join(" ");
+  };
+
   // Load initial messages from main process
   useEffect(() => {
     const loadMessages = async (): Promise<void> => {
@@ -55,7 +69,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
           const convertedMessages = storedMessages.map((msg, index) => ({
             id: `msg-${index}`,
             role: msg.role,
-            content: msg.content,
+            content: extractTextContent(msg.content),
             timestamp: Date.now(),
             isStreaming: false,
           }));
@@ -142,7 +156,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
       updatedMessages: Array<{
         id: string;
         role: "user" | "assistant" | "system";
-        content: string;
+        content:
+          | string
+          | Array<{ type: string; text?: string; image?: string }>;
         timestamp: number;
       }>,
     ): void => {
@@ -150,7 +166,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
       const convertedMessages = updatedMessages.map((msg, index) => ({
         id: `msg-${index}`,
         role: msg.role,
-        content: msg.content,
+        content: extractTextContent(msg.content),
         timestamp: Date.now(),
         isStreaming: false,
       }));
