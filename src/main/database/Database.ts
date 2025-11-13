@@ -65,9 +65,9 @@ export class DatabaseManager {
       this.loadOrGenerateEncryptionKey();
 
       // Create database connection
-      this.db = new Database(this.dbPath, {
-        verbose: (message) => log.debug("[Database SQL]", message),
-      });
+      // Note: verbose SQL logging disabled to reduce log noise
+      // To enable for debugging, add: verbose: (message) => log.debug("[Database SQL]", message)
+      this.db = new Database(this.dbPath);
 
       // Enable WAL mode for concurrent reads
       this.db.pragma("journal_mode = WAL");

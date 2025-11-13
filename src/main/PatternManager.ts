@@ -64,6 +64,40 @@ export interface NavigationPattern {
 }
 
 /**
+ * Form field data for pattern tracking
+ */
+export interface FormField {
+  name: string;
+  type: string;
+  valuePattern:
+    | "email_format"
+    | "name_format"
+    | "phone_format"
+    | "number_format"
+    | "text_format";
+}
+
+/**
+ * Form submission data from renderer process
+ */
+export interface FormSubmissionData {
+  domain: string;
+  formSelector: string;
+  fields: FormField[];
+  timestamp: number;
+  tabId: string;
+}
+
+/**
+ * Form pattern structure for JSON storage
+ */
+export interface FormPattern {
+  domain: string;
+  formSelector: string;
+  fields: FormField[];
+}
+
+/**
  * Standard IPC response format
  */
 interface IPCResponse<T = unknown> {
@@ -391,6 +425,150 @@ export class PatternManager {
         success: false,
         error: {
           code: "TRACK_ERROR",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      };
+    }
+  }
+
+  /**
+   * Track form submission and store in pattern database
+   * Groups form submissions by domain + field names hash
+   * Triggers notification when occurrence_count reaches threshold (3)
+   */
+  public async trackFormSubmission(
+    data: FormSubmissionData,
+  ): Promise<IPCResponse<void>> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      const DETECTION_THRESHOLD = 3; // Trigger notification after 3 identical submissions
+
+      // Generate pattern hash for matching (domain + sorted field names)
+      const fieldNames = data.fields
+        .map((f) => f.name)
+        .sort()
+        .join(",");
+      const patternHash = `${data.domain}::${fieldNames}`;
+
+      // Find existing pattern with same domain and field names
+      const existingPatternStmt = this.db.prepare(`
+        SELECT id, pattern_data, occurrence_count, confidence
+        FROM patterns
+        WHERE type = 'form'
+        AND json_extract(pattern_data, '$.domain') = ?
+        ORDER BY last_seen DESC
+      `);
+
+      const existingPatterns = existingPatternStmt.all(data.domain) as Array<{
+        id: string;
+        pattern_data: string;
+        occurrence_count: number;
+        confidence: number;
+      }>;
+
+      // Find matching pattern by comparing field names
+      let matchingPattern: (typeof existingPatterns)[0] | undefined;
+      for (const pattern of existingPatterns) {
+        const patternData: FormPattern = JSON.parse(pattern.pattern_data);
+        const existingFieldNames = patternData.fields
+          .map((f) => f.name)
+          .sort()
+          .join(",");
+
+        if (
+          existingFieldNames === fieldNames &&
+          patternData.formSelector === data.formSelector
+        ) {
+          matchingPattern = pattern;
+          break;
+        }
+      }
+
+      if (matchingPattern) {
+        // Increment occurrence count for existing pattern
+        const newOccurrenceCount = matchingPattern.occurrence_count + 1;
+        const newConfidence = Math.min(newOccurrenceCount * 20, 100); // Max 100%
+
+        const updateStmt = this.db.prepare(`
+          UPDATE patterns
+          SET occurrence_count = ?,
+              confidence = ?,
+              last_seen = ?
+          WHERE id = ?
+        `);
+
+        updateStmt.run(
+          newOccurrenceCount,
+          newConfidence,
+          data.timestamp,
+          matchingPattern.id,
+        );
+
+        log.info("[PatternManager] Form pattern occurrence incremented:", {
+          patternId: matchingPattern.id,
+          domain: data.domain,
+          occurrenceCount: newOccurrenceCount,
+          confidence: newConfidence,
+        });
+
+        // Trigger notification if threshold reached
+        if (newOccurrenceCount === DETECTION_THRESHOLD) {
+          log.info(
+            "[PatternManager] Form pattern threshold reached - notification triggered",
+            {
+              patternId: matchingPattern.id,
+              domain: data.domain,
+              formSelector: data.formSelector,
+              fieldCount: data.fields.length,
+            },
+          );
+          // TODO: Trigger notification system (Story 1.9)
+        }
+      } else {
+        // Create new form pattern
+        const patternId = `form-${patternHash}-${Date.now()}`;
+        const formPattern: FormPattern = {
+          domain: data.domain,
+          formSelector: data.formSelector,
+          fields: data.fields,
+        };
+
+        const insertStmt = this.db.prepare(`
+          INSERT INTO patterns (
+            id, type, pattern_data, confidence, occurrence_count,
+            first_seen, last_seen, created_at
+          ) VALUES (?, 'form', ?, 0, 1, ?, ?, ?)
+        `);
+
+        insertStmt.run(
+          patternId,
+          JSON.stringify(formPattern),
+          data.timestamp,
+          data.timestamp,
+          data.timestamp,
+        );
+
+        log.info("[PatternManager] New form pattern created:", {
+          patternId,
+          domain: data.domain,
+          formSelector: data.formSelector,
+          fieldCount: data.fields.length,
+        });
+      }
+
+      // Run cleanup if needed
+      await this.cleanupOldPatterns();
+
+      return { success: true };
+    } catch (error) {
+      log.error("[PatternManager] Track form submission error:", error);
+      return {
+        success: false,
+        error: {
+          code: "TRACK_FORM_ERROR",
           message: error instanceof Error ? error.message : "Unknown error",
         },
       };

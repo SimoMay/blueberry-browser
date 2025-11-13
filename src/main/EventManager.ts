@@ -491,6 +491,33 @@ export class EventManager {
         };
       }
     });
+
+    // Track form submission
+    ipcMain.handle("pattern:track-form", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:track-form", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Call PatternManager (validation happens inside trackFormSubmission)
+        return await patternManager.trackFormSubmission(data);
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
   }
 
   private handleMonitorEvents(): void {
