@@ -134,7 +134,9 @@ export class LLMClient {
       }
 
       // Build user message content with screenshot first, then text
-      const userContent: any[] = [];
+      const userContent: Array<
+        { type: "image"; image: string } | { type: "text"; text: string }
+      > = [];
 
       // Add screenshot as the first part if available
       if (screenshot) {
@@ -169,7 +171,7 @@ export class LLMClient {
         return;
       }
 
-      const messages = await this.prepareMessagesWithContext(request);
+      const messages = await this.prepareMessagesWithContext();
       await this.streamResponse(messages, request.messageId);
     } catch (error) {
       console.error("Error in LLM request:", error);
@@ -190,9 +192,7 @@ export class LLMClient {
     this.webContents.send("chat-messages-updated", this.messages);
   }
 
-  private async prepareMessagesWithContext(
-    _request: ChatRequest,
-  ): Promise<CoreMessage[]> {
+  private async prepareMessagesWithContext(): Promise<CoreMessage[]> {
     // Get page context from active tab
     let pageUrl: string | null = null;
     let pageText: string | null = null;
@@ -259,19 +259,15 @@ export class LLMClient {
       throw new Error("Model not initialized");
     }
 
-    try {
-      const result = await streamText({
-        model: this.model,
-        messages,
-        temperature: DEFAULT_TEMPERATURE,
-        maxRetries: 3,
-        abortSignal: undefined, // Could add abort controller for cancellation
-      });
+    const result = await streamText({
+      model: this.model,
+      messages,
+      temperature: DEFAULT_TEMPERATURE,
+      maxRetries: 3,
+      abortSignal: undefined, // Could add abort controller for cancellation
+    });
 
-      await this.processStream(result.textStream, messageId);
-    } catch (error) {
-      throw error; // Re-throw to be handled by the caller
-    }
+    await this.processStream(result.textStream, messageId);
   }
 
   private async processStream(

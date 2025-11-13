@@ -9,14 +9,16 @@ import { Button } from "@common/components/Button";
 
 interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
   isStreaming?: boolean;
 }
 
 // Auto-scroll hook
-const useAutoScroll = (messages: Message[]) => {
+const useAutoScroll = (
+  messages: Message[],
+): React.RefObject<HTMLDivElement | null> => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevCount = useRef(0);
 
@@ -89,7 +91,7 @@ const Markdown: React.FC<{ content: string }> = ({ content }) => (
       remarkPlugins={[remarkGfm, remarkBreaks]}
       components={{
         // Custom code block styling
-        code: ({ node, className, children, ...props }) => {
+        code: ({ className, children, ...props }) => {
           const inline = !className;
           return inline ? (
             <code
@@ -177,7 +179,7 @@ const ChatInput: React.FC<{
     }
   }, [value]);
 
-  const handleSubmit = () => {
+  const handleSubmit = (): void => {
     if (value.trim() && !disabled) {
       onSend(value.trim());
       setValue("");
@@ -188,7 +190,7 @@ const ChatInput: React.FC<{
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();

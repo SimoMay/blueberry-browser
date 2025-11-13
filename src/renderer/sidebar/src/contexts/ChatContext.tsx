@@ -8,7 +8,7 @@ import React, {
 
 interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
   isStreaming?: boolean;
@@ -30,7 +30,8 @@ interface ChatContextType {
 
 const ChatContext = createContext<ChatContextType | null>(null);
 
-export const useChat = () => {
+// eslint-disable-next-line react-refresh/only-export-components
+export const useChat = (): ChatContextType => {
   const context = useContext(ChatContext);
   if (!context) {
     throw new Error("useChat must be used within a ChatProvider");
@@ -46,23 +47,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // Load initial messages from main process
   useEffect(() => {
-    const loadMessages = async () => {
+    const loadMessages = async (): Promise<void> => {
       try {
         const storedMessages = await window.sidebarAPI.getMessages();
         if (storedMessages && storedMessages.length > 0) {
           // Convert CoreMessage format to our frontend Message format
-          const convertedMessages = storedMessages.map(
-            (msg: any, index: number) => ({
-              id: `msg-${index}`,
-              role: msg.role,
-              content:
-                typeof msg.content === "string"
-                  ? msg.content
-                  : msg.content.find((p: any) => p.type === "text")?.text || "",
-              timestamp: Date.now(),
-              isStreaming: false,
-            }),
-          );
+          const convertedMessages = storedMessages.map((msg, index) => ({
+            id: `msg-${index}`,
+            role: msg.role,
+            content: msg.content,
+            timestamp: Date.now(),
+            isStreaming: false,
+          }));
           setMessages(convertedMessages);
         }
       } catch (error) {
@@ -135,27 +131,29 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
       messageId: string;
       content: string;
       isComplete: boolean;
-    }) => {
+    }): void => {
       if (data.isComplete) {
         setIsLoading(false);
       }
     };
 
     // Listen for message updates from main process
-    const handleMessagesUpdated = (updatedMessages: any[]) => {
+    const handleMessagesUpdated = (
+      updatedMessages: Array<{
+        id: string;
+        role: "user" | "assistant" | "system";
+        content: string;
+        timestamp: number;
+      }>,
+    ): void => {
       // Convert CoreMessage format to our frontend Message format
-      const convertedMessages = updatedMessages.map(
-        (msg: any, index: number) => ({
-          id: `msg-${index}`,
-          role: msg.role,
-          content:
-            typeof msg.content === "string"
-              ? msg.content
-              : msg.content.find((p: any) => p.type === "text")?.text || "",
-          timestamp: Date.now(),
-          isStreaming: false,
-        }),
-      );
+      const convertedMessages = updatedMessages.map((msg, index) => ({
+        id: `msg-${index}`,
+        role: msg.role,
+        content: msg.content,
+        timestamp: Date.now(),
+        isStreaming: false,
+      }));
       setMessages(convertedMessages);
     };
 

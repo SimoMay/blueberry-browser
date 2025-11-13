@@ -29,7 +29,7 @@ export const AddressBar: React.FC = () => {
     }
   }, [activeTab, isEditing]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent): void => {
     e.preventDefault();
     if (!url.trim()) return;
 
@@ -52,12 +52,12 @@ export const AddressBar: React.FC = () => {
     (document.activeElement as HTMLElement)?.blur();
   };
 
-  const handleFocus = () => {
+  const handleFocus = (): void => {
     setIsEditing(true);
     setIsFocused(true);
   };
 
-  const handleBlur = () => {
+  const handleBlur = (): void => {
     setIsEditing(false);
     setIsFocused(false);
     // Reset to current tab URL if editing was cancelled
@@ -66,7 +66,7 @@ export const AddressBar: React.FC = () => {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === "Escape") {
       setIsEditing(false);
       setIsFocused(false);
@@ -81,7 +81,7 @@ export const AddressBar: React.FC = () => {
   const canGoForward = activeTab !== null;
 
   // Extract domain and title for display
-  const getDomain = () => {
+  const getDomain = (): string => {
     if (!activeTab?.url) return "";
     try {
       const urlObj = new URL(activeTab.url);
@@ -91,7 +91,7 @@ export const AddressBar: React.FC = () => {
     }
   };
 
-  const getPath = () => {
+  const getPath = (): string => {
     if (!activeTab?.url) return "";
     try {
       const urlObj = new URL(activeTab.url);
@@ -101,7 +101,7 @@ export const AddressBar: React.FC = () => {
     }
   };
 
-  const getFavicon = () => {
+  const getFavicon = (): string | null => {
     if (!activeTab?.url) return null;
     try {
       const domain = new URL(activeTab.url).hostname;
@@ -111,7 +111,7 @@ export const AddressBar: React.FC = () => {
     }
   };
 
-  const toggleSidebar = () => {
+  const toggleSidebar = (): void => {
     setIsSidebarOpen(!isSidebarOpen);
     // Send IPC event to toggle sidebar
     if (window.topBarAPI) {

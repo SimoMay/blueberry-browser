@@ -18,7 +18,7 @@ interface ChatResponse {
 
 interface ChatMessage {
   id: string;
-  role: string;
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
 }

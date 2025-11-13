@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 
-export const useDarkMode = () => {
+export const useDarkMode = (): {
+  isDarkMode: boolean;
+  toggleDarkMode: () => void;
+} => {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     // Check if dark mode preference exists in localStorage
     const savedMode = localStorage.getItem("darkMode");
@@ -30,7 +33,10 @@ export const useDarkMode = () => {
 
   // Listen for dark mode changes from other windows
   useEffect(() => {
-    const handleDarkModeUpdate = (_event: any, newDarkMode: boolean) => {
+    const handleDarkModeUpdate = (
+      _event: unknown,
+      newDarkMode: boolean,
+    ): void => {
       setIsDarkMode(newDarkMode);
     };
 
@@ -48,7 +54,7 @@ export const useDarkMode = () => {
     };
   }, []);
 
-  const toggleDarkMode = () => {
+  const toggleDarkMode = (): void => {
     setIsDarkMode(!isDarkMode);
   };
 

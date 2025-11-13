@@ -73,12 +73,12 @@ const TabItem: React.FC<TabItemProps> = ({
 export const TabBar: React.FC = () => {
   const { tabs, createTab, closeTab, switchTab } = useBrowser();
 
-  const handleCreateTab = () => {
+  const handleCreateTab = (): void => {
     createTab("https://www.google.com");
   };
 
   // Extract favicon from URL (simplified - you might want to improve this)
-  const getFavicon = (url: string) => {
+  const getFavicon = (url: string): string | null => {
     try {
       const domain = new URL(url).hostname;
       return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;

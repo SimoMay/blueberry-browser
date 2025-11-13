@@ -32,12 +32,13 @@ interface BrowserContextType {
 
   // Tab actions
   takeScreenshot: (tabId: string) => Promise<string | null>;
-  runJavaScript: (tabId: string, code: string) => Promise<any>;
+  runJavaScript: (tabId: string, code: string) => Promise<unknown>;
 }
 
 const BrowserContext = createContext<BrowserContextType | null>(null);
 
-export const useBrowser = () => {
+// eslint-disable-next-line react-refresh/only-export-components
+export const useBrowser = (): BrowserContextType => {
   const context = useContext(BrowserContext);
   if (!context) {
     throw new Error("useBrowser must be used within a BrowserProvider");
