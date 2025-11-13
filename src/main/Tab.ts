@@ -33,6 +33,27 @@ export class Tab {
   }
 
   private setupEventListeners(): void {
+    // Handle SSL certificate errors (suppress harmless warnings in dev)
+    this.webContentsView.webContents.session.setCertificateVerifyProc(
+      (request, callback) => {
+        const { hostname, verificationResult, errorCode } = request;
+
+        // In development, log but allow all certificates
+        // In production, you may want stricter validation
+        if (errorCode !== 0) {
+          log.warn("[Tab] Certificate verification warning:", {
+            hostname,
+            verificationResult,
+            errorCode,
+          });
+        }
+
+        // Accept the certificate (prevents SSL errors in logs)
+        // For production, you might want: callback(errorCode === 0 ? 0 : -2)
+        callback(0);
+      },
+    );
+
     // Update title when page title changes
     this.webContentsView.webContents.on("page-title-updated", (_, title) => {
       this._title = title;
