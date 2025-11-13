@@ -6,7 +6,22 @@ import { ArrowUp, Plus } from "lucide-react";
 import { useChat } from "../contexts/ChatContext";
 import { cn } from "@common/lib/utils";
 import { Button } from "@common/components/Button";
-import { PatternNotification } from "./PatternNotification";
+import { PatternActionMessage } from "./PatternActionMessage";
+
+interface PatternData {
+  notificationId: string;
+  patternData: {
+    patternId: string;
+    patternType: "navigation" | "form";
+    confidence: number;
+    occurrenceCount: number;
+    patternData?: {
+      sequence?: Array<{ url: string }>;
+      domain?: string;
+      fields?: Array<unknown>;
+    };
+  };
+}
 
 interface Message {
   id: string;
@@ -14,6 +29,7 @@ interface Message {
   content: string;
   timestamp: number;
   isStreaming?: boolean;
+  patternData?: PatternData;
 }
 
 // Auto-scroll hook
@@ -250,6 +266,37 @@ const ChatInput: React.FC<{
   );
 };
 
+// Helper function to generate conversational pattern messages
+const generatePatternMessage = (
+  pattern: PatternData["patternData"],
+): string => {
+  const { patternType, occurrenceCount, confidence, patternData } = pattern;
+
+  if (patternType === "navigation" && patternData?.sequence) {
+    const urls = patternData.sequence
+      .slice(0, 5) // Show first 5 URLs
+      .map((s) => {
+        try {
+          const url = new URL(s.url);
+          return url.hostname.replace(/^www\./, "");
+        } catch {
+          return s.url;
+        }
+      })
+      .join(" → ");
+
+    return `I noticed you've been navigating ${urls} ${occurrenceCount} times recently. This looks like a workflow you repeat often. Would you like me to convert this into an automation to save time?`;
+  }
+
+  if (patternType === "form" && patternData?.domain) {
+    const fieldCount = patternData.fields?.length || 0;
+    return `I've observed you filling out the ${patternData.domain} form (${fieldCount} fields) ${occurrenceCount} times. I can help automate this repetitive task. Would you like to save this as an automation?`;
+  }
+
+  // Fallback generic message
+  return `I detected a ${patternType} pattern that you've repeated ${occurrenceCount} times with ${confidence.toFixed(0)}% confidence. Would you like to convert this into an automation?`;
+};
+
 // Conversation Turn Component
 interface ConversationTurn {
   user?: Message;
@@ -259,14 +306,49 @@ interface ConversationTurn {
 const ConversationTurnComponent: React.FC<{
   turn: ConversationTurn;
   isLoading?: boolean;
-}> = ({ turn, isLoading }) => (
+  onPatternDismiss?: (patternId: string) => void;
+  onPatternAutomationSaved?: (message: string) => void;
+  onPatternError?: (error: string) => void;
+}> = ({
+  turn,
+  isLoading,
+  onPatternDismiss,
+  onPatternAutomationSaved,
+  onPatternError,
+}) => (
   <div className="pt-12 flex flex-col gap-8">
     {turn.user && <UserMessage content={turn.user.content} />}
     {turn.assistant && (
-      <AssistantMessage
-        content={turn.assistant.content}
-        isStreaming={turn.assistant.isStreaming}
-      />
+      <>
+        {turn.assistant.patternData ? (
+          <PatternActionMessage
+            content={turn.assistant.content}
+            patternId={turn.assistant.patternData.patternData.patternId}
+            patternData={turn.assistant.patternData.patternData}
+            notificationId={turn.assistant.patternData.notificationId}
+            onDismiss={() => {
+              if (onPatternDismiss && turn.assistant?.patternData) {
+                onPatternDismiss(turn.assistant.id);
+              }
+            }}
+            onAutomationSaved={(message) => {
+              if (onPatternAutomationSaved) {
+                onPatternAutomationSaved(message);
+              }
+            }}
+            onError={(error) => {
+              if (onPatternError) {
+                onPatternError(error);
+              }
+            }}
+          />
+        ) : (
+          <AssistantMessage
+            content={turn.assistant.content}
+            isStreaming={turn.assistant.isStreaming}
+          />
+        )}
+      </>
     )}
     {isLoading && (
       <div className="flex justify-start">
@@ -277,9 +359,102 @@ const ConversationTurnComponent: React.FC<{
 );
 
 // Main Chat Component
-export const Chat: React.FC = () => {
-  const { messages, isLoading, sendMessage, clearChat } = useChat();
+interface ChatProps {
+  pendingPatternData?: PatternData | null;
+  onPatternProcessed?: () => void;
+  onPatternActionComplete?: (notificationId: string) => void;
+}
+
+export const Chat: React.FC<ChatProps> = ({
+  pendingPatternData,
+  onPatternProcessed,
+  onPatternActionComplete,
+}) => {
+  const {
+    messages: chatMessages,
+    isLoading,
+    sendMessage,
+    clearChat,
+  } = useChat();
+  const [patternMessages, setPatternMessages] = useState<Message[]>([]);
+  // Track which pattern notifications we've already created messages for
+  const processedPatternNotifications = useRef<Set<string>>(new Set());
+
+  // Combine chat messages and pattern messages
+  const messages = [...chatMessages, ...patternMessages].sort(
+    (a, b) => a.timestamp - b.timestamp,
+  );
+
   const scrollRef = useAutoScroll(messages);
+
+  // Pattern action handlers
+  const handlePatternDismiss = (messageId: string): void => {
+    setPatternMessages((prev) => prev.filter((m) => m.id !== messageId));
+  };
+
+  const handlePatternAutomationSaved = (
+    messageId: string,
+    successMessage: string,
+  ): void => {
+    // Extract notification ID from message ID (format: pattern-${notificationId})
+    const notificationId = messageId.replace(/^pattern-/, "");
+
+    // Mark notification as processed (permanent action taken)
+    if (onPatternActionComplete) {
+      onPatternActionComplete(notificationId);
+    }
+
+    // Add success message to chat
+    const newMessage: Message = {
+      id: `success-${Date.now()}`,
+      role: "assistant",
+      content: successMessage,
+      timestamp: Date.now(),
+    };
+    setPatternMessages((prev) => [...prev, newMessage]);
+  };
+
+  const handlePatternError = (errorMessage: string): void => {
+    // Add error message to chat
+    const newMessage: Message = {
+      id: `error-${Date.now()}`,
+      role: "assistant",
+      content: `❌ ${errorMessage}`,
+      timestamp: Date.now(),
+    };
+    setPatternMessages((prev) => [...prev, newMessage]);
+  };
+
+  // Handle pattern notification clicks
+  useEffect(() => {
+    if (pendingPatternData && onPatternProcessed) {
+      const notificationId = pendingPatternData.notificationId;
+
+      // Check if we've already processed this notification (prevent duplicates)
+      if (processedPatternNotifications.current.has(notificationId)) {
+        onPatternProcessed();
+        return;
+      }
+
+      // Mark as processed immediately (before state update)
+      processedPatternNotifications.current.add(notificationId);
+
+      // Generate conversational AI message about the pattern
+      const content = generatePatternMessage(pendingPatternData.patternData);
+
+      // Create pattern action message
+      const newMessage: Message = {
+        id: `pattern-${notificationId}`, // Use notification ID for uniqueness
+        role: "assistant",
+        content,
+        timestamp: Date.now(),
+        patternData: pendingPatternData,
+      };
+
+      setPatternMessages((prev) => [...prev, newMessage]);
+      onPatternProcessed();
+    }
+  }, [pendingPatternData, onPatternProcessed]);
 
   // Group messages into conversation turns
   const conversationTurns: ConversationTurn[] = [];
@@ -316,9 +491,6 @@ export const Chat: React.FC = () => {
               New Chat
             </Button>
           )}
-
-          {/* Pattern Notification Badge */}
-          <PatternNotification />
         </div>
 
         <div className="pb-4 relative max-w-3xl mx-auto px-4">
@@ -343,6 +515,13 @@ export const Chat: React.FC = () => {
                     showLoadingAfterLastTurn &&
                     index === conversationTurns.length - 1
                   }
+                  onPatternDismiss={handlePatternDismiss}
+                  onPatternAutomationSaved={(msg) => {
+                    if (turn.assistant?.id) {
+                      handlePatternAutomationSaved(turn.assistant.id, msg);
+                    }
+                  }}
+                  onPatternError={handlePatternError}
                 />
               ))}
             </>

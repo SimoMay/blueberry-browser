@@ -14,6 +14,7 @@ import { Button } from "@common/components/Button";
 
 interface NotificationPanelProps {
   onBackToChat?: () => void;
+  onPatternClick?: (notificationId: string, patternData: unknown) => void;
 }
 
 interface Notification {
@@ -33,6 +34,7 @@ interface Notification {
  */
 export const NotificationPanel: React.FC<NotificationPanelProps> = ({
   onBackToChat,
+  onPatternClick,
 }) => {
   const { notifications, dismissNotification, markAllRead, loading } =
     useNotifications();
@@ -220,45 +222,79 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
               </div>
 
               {/* Unread notification items */}
-              {unreadNotifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  className="p-4 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                >
-                  <div className="flex items-start gap-3">
-                    {/* Severity icon */}
-                    <div className="flex-shrink-0 mt-0.5">
-                      {getSeverityIcon(notification.severity)}
-                    </div>
+              {unreadNotifications.map((notification) => {
+                const isPattern = notification.type === "pattern";
+                const handleNotificationClick = (): void => {
+                  if (isPattern && notification.data && onPatternClick) {
+                    // Parse pattern data if it's a JSON string
+                    let patternData;
+                    try {
+                      patternData =
+                        typeof notification.data === "string"
+                          ? JSON.parse(notification.data)
+                          : notification.data;
+                    } catch (error) {
+                      console.error(
+                        "[NotificationPanel] Failed to parse pattern data:",
+                        error,
+                      );
+                      patternData = notification.data;
+                    }
 
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <h4 className="text-sm font-medium text-gray-900 dark:text-white">
-                          {notification.title}
-                        </h4>
+                    // Call parent callback to handle pattern click
+                    onPatternClick(notification.id, patternData);
+                  }
+                };
 
-                        {/* Dismiss button */}
-                        <button
-                          onClick={() => dismissNotification(notification.id)}
-                          className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                          aria-label="Dismiss notification"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
+                return (
+                  <div
+                    key={notification.id}
+                    className={`p-4 border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${isPattern ? "cursor-pointer" : ""}`}
+                    onClick={handleNotificationClick}
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* Severity icon */}
+                      <div className="flex-shrink-0 mt-0.5">
+                        {getSeverityIcon(notification.severity)}
                       </div>
 
-                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                        {notification.message}
-                      </p>
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="text-sm font-medium text-gray-900 dark:text-white">
+                            {notification.title}
+                            {isPattern && (
+                              <span className="ml-2 text-xs text-blue-500">
+                                (Click to interact)
+                              </span>
+                            )}
+                          </h4>
 
-                      <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
-                        {formatTimestamp(notification.created_at)}
-                      </p>
+                          {/* Dismiss button */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              dismissNotification(notification.id);
+                            }}
+                            className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                            aria-label="Dismiss notification"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                          {notification.message}
+                        </p>
+
+                        <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
+                          {formatTimestamp(notification.created_at)}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
