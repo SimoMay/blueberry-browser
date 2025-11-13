@@ -1,4 +1,6 @@
-import { NativeImage, WebContentsView } from "electron";
+import { NativeImage, WebContents, WebContentsView } from "electron";
+import log from "electron-log";
+import { PatternManager } from "./PatternManager";
 
 export class Tab {
   private webContentsView: WebContentsView;
@@ -36,13 +38,44 @@ export class Tab {
     });
 
     // Update URL when navigation occurs
-    this.webContentsView.webContents.on("did-navigate", (_, url) => {
+    this.webContentsView.webContents.on("did-navigate", async (_, url) => {
       this._url = url;
+
+      // Track navigation pattern
+      const timestamp = Date.now();
+      try {
+        const patternManager = PatternManager.getInstance();
+        await patternManager.trackNavigation({
+          url,
+          tabId: this._id,
+          timestamp,
+          eventType: "did-navigate",
+        });
+      } catch (error) {
+        log.error("[Tab] Navigation tracking error:", error);
+      }
     });
 
-    this.webContentsView.webContents.on("did-navigate-in-page", (_, url) => {
-      this._url = url;
-    });
+    this.webContentsView.webContents.on(
+      "did-navigate-in-page",
+      async (_, url) => {
+        this._url = url;
+
+        // Track in-page navigation pattern (SPA transitions)
+        const timestamp = Date.now();
+        try {
+          const patternManager = PatternManager.getInstance();
+          await patternManager.trackNavigation({
+            url,
+            tabId: this._id,
+            timestamp,
+            eventType: "did-navigate-in-page",
+          });
+        } catch (error) {
+          log.error("[Tab] In-page navigation tracking error:", error);
+        }
+      },
+    );
   }
 
   // Getters
@@ -62,7 +95,7 @@ export class Tab {
     return this._isVisible;
   }
 
-  get webContents() {
+  get webContents(): WebContents {
     return this.webContentsView.webContents;
   }
 
@@ -85,16 +118,20 @@ export class Tab {
     return await this.webContentsView.webContents.capturePage();
   }
 
-  async runJs(code: string): Promise<any> {
+  async runJs(code: string): Promise<unknown> {
     return await this.webContentsView.webContents.executeJavaScript(code);
   }
 
   async getTabHtml(): Promise<string> {
-    return await this.runJs("return document.documentElement.outerHTML");
+    return (await this.runJs(
+      "return document.documentElement.outerHTML",
+    )) as string;
   }
 
   async getTabText(): Promise<string> {
-    return await this.runJs("return document.documentElement.innerText");
+    return (await this.runJs(
+      "return document.documentElement.innerText",
+    )) as string;
   }
 
   loadURL(url: string): Promise<void> {

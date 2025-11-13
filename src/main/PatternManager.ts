@@ -37,6 +37,33 @@ export interface Automation {
 }
 
 /**
+ * Navigation event data for pattern tracking
+ */
+export interface NavigationEvent {
+  url: string;
+  tabId: string;
+  timestamp: number;
+  eventType: "did-navigate" | "did-navigate-in-page";
+}
+
+/**
+ * Navigation sequence item stored in pattern_data
+ */
+export interface NavigationSequenceItem {
+  url: string;
+  timestamp: number;
+  tabId: string;
+}
+
+/**
+ * Navigation pattern structure for JSON storage
+ */
+export interface NavigationPattern {
+  sequence: NavigationSequenceItem[];
+  sessionGap: number; // 30 minutes in milliseconds (1800000)
+}
+
+/**
  * Standard IPC response format
  */
 interface IPCResponse<T = unknown> {
@@ -80,6 +107,9 @@ export class PatternManager {
 
       // Get database instance
       this.db = DatabaseManager.getInstance().getDatabase();
+
+      // Run cleanup on startup
+      await this.cleanupOldPatterns();
 
       log.info("[PatternManager] Initialized successfully");
     } catch (error) {
@@ -251,6 +281,177 @@ export class PatternManager {
           message: error instanceof Error ? error.message : "Unknown error",
         },
       };
+    }
+  }
+
+  /**
+   * Track navigation event and store in pattern database
+   * Groups navigations into sessions based on 30-minute gap threshold
+   */
+  public async trackNavigation(
+    event: NavigationEvent,
+  ): Promise<IPCResponse<void>> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      const SESSION_GAP_MS = 30 * 60 * 1000; // 30 minutes
+
+      // Find most recent navigation pattern for this tab
+      const lastPatternStmt = this.db.prepare(`
+        SELECT id, pattern_data, last_seen
+        FROM patterns
+        WHERE type = 'navigation'
+        AND json_extract(pattern_data, '$.sequence[#-1].tabId') = ?
+        ORDER BY last_seen DESC
+        LIMIT 1
+      `);
+
+      const lastPattern = lastPatternStmt.get(event.tabId) as
+        | { id: string; pattern_data: string; last_seen: number }
+        | undefined;
+
+      // Check if we should continue existing session or start new one
+      const shouldStartNewSession =
+        !lastPattern ||
+        event.timestamp - lastPattern.last_seen > SESSION_GAP_MS;
+
+      if (shouldStartNewSession) {
+        // Create new navigation pattern session
+        const patternId = uuidv4();
+        const newPattern: NavigationPattern = {
+          sequence: [
+            {
+              url: event.url,
+              timestamp: event.timestamp,
+              tabId: event.tabId,
+            },
+          ],
+          sessionGap: SESSION_GAP_MS,
+        };
+
+        const insertStmt = this.db.prepare(`
+          INSERT INTO patterns (
+            id, type, pattern_data, confidence, occurrence_count,
+            first_seen, last_seen, created_at
+          ) VALUES (?, 'navigation', ?, 0, 1, ?, ?, ?)
+        `);
+
+        insertStmt.run(
+          patternId,
+          JSON.stringify(newPattern),
+          event.timestamp,
+          event.timestamp,
+          event.timestamp,
+        );
+
+        log.info("[PatternManager] New navigation session started:", {
+          patternId,
+          url: event.url,
+          tabId: event.tabId,
+        });
+      } else {
+        // Append to existing session
+        const existingPattern: NavigationPattern = JSON.parse(
+          lastPattern.pattern_data,
+        );
+        existingPattern.sequence.push({
+          url: event.url,
+          timestamp: event.timestamp,
+          tabId: event.tabId,
+        });
+
+        const updateStmt = this.db.prepare(`
+          UPDATE patterns
+          SET pattern_data = ?, last_seen = ?
+          WHERE id = ?
+        `);
+
+        updateStmt.run(
+          JSON.stringify(existingPattern),
+          event.timestamp,
+          lastPattern.id,
+        );
+
+        log.info("[PatternManager] Navigation appended to session:", {
+          patternId: lastPattern.id,
+          sequenceLength: existingPattern.sequence.length,
+          url: event.url,
+        });
+      }
+
+      // Run cleanup if needed (lightweight check)
+      await this.cleanupOldPatterns();
+
+      return { success: true };
+    } catch (error) {
+      log.error("[PatternManager] Track navigation error:", error);
+      return {
+        success: false,
+        error: {
+          code: "TRACK_ERROR",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      };
+    }
+  }
+
+  /**
+   * Clean up old patterns based on retention policy
+   * - Delete patterns older than 30 days
+   * - Enforce max 100 patterns using FIFO deletion
+   */
+  public async cleanupOldPatterns(): Promise<void> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      const RETENTION_DAYS = 30;
+      const MAX_PATTERNS = 100;
+      const cutoffTime = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+      // Delete old patterns (30 days)
+      const deleteOldStmt = this.db.prepare(`
+        DELETE FROM patterns
+        WHERE created_at < ?
+      `);
+      const oldResult = deleteOldStmt.run(cutoffTime);
+
+      if (oldResult.changes > 0) {
+        log.info(
+          "[PatternManager] Cleanup: Deleted old patterns:",
+          oldResult.changes,
+        );
+      }
+
+      // Enforce max pattern limit (FIFO)
+      const countStmt = this.db.prepare(
+        "SELECT COUNT(*) as count FROM patterns",
+      );
+      const result = countStmt.get() as { count: number } | undefined;
+      const count = result?.count || 0;
+
+      if (count > MAX_PATTERNS) {
+        const excessCount = count - MAX_PATTERNS;
+        const deleteFifoStmt = this.db.prepare(`
+          DELETE FROM patterns
+          WHERE id IN (
+            SELECT id FROM patterns
+            ORDER BY created_at ASC
+            LIMIT ?
+          )
+        `);
+        const fifoResult = deleteFifoStmt.run(excessCount);
+
+        log.info(
+          "[PatternManager] Cleanup: FIFO deletion:",
+          fifoResult.changes,
+        );
+      }
+    } catch (error) {
+      log.error("[PatternManager] Cleanup error:", error);
     }
   }
 

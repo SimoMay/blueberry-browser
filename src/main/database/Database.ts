@@ -426,12 +426,82 @@ export class DatabaseManager {
           DROP TABLE IF EXISTS notifications;
         `,
       },
+      {
+        version: 3,
+        up: `
+          -- Story 1.5: Monitor Management IPC Architecture
+          -- Drop old monitors table (from v1) and create new schema with goal, frequency, status
+          DROP TABLE IF EXISTS monitor_alerts;
+          DROP TABLE IF EXISTS snapshots;
+          DROP TABLE IF EXISTS monitors;
+
+          CREATE TABLE monitors (
+            id TEXT PRIMARY KEY,
+            url TEXT NOT NULL,
+            goal TEXT,
+            frequency TEXT NOT NULL CHECK(frequency IN ('1h', '2h', '4h', '6h')),
+            status TEXT DEFAULT 'active' CHECK(status IN ('active', 'paused', 'error')),
+            last_check INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
+
+          CREATE INDEX idx_monitors_status ON monitors(status);
+          CREATE INDEX idx_monitors_created_at ON monitors(created_at);
+        `,
+        down: `
+          DROP TABLE IF EXISTS monitors;
+        `,
+      },
+      {
+        version: 4,
+        up: `
+          -- Story 1.6: Navigation Pattern Tracking
+          -- Update patterns table schema to support navigation, form, and copy-paste patterns
+          -- Drop old patterns table (from v1) and recreate with new schema
+          DROP TABLE IF EXISTS automations;
+          DROP TABLE IF EXISTS patterns;
+
+          CREATE TABLE patterns (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('navigation', 'form', 'copy-paste')),
+            pattern_data TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            occurrence_count INTEGER DEFAULT 1,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            dismissed BOOLEAN DEFAULT 0,
+            created_at INTEGER NOT NULL
+          );
+
+          CREATE INDEX idx_patterns_type ON patterns(type);
+          CREATE INDEX idx_patterns_confidence ON patterns(confidence);
+          CREATE INDEX idx_patterns_dismissed ON patterns(dismissed);
+          CREATE INDEX idx_patterns_created_at ON patterns(created_at);
+
+          CREATE TABLE automations (
+            id TEXT PRIMARY KEY,
+            pattern_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (pattern_id) REFERENCES patterns(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX idx_automations_pattern ON automations(pattern_id);
+        `,
+        down: `
+          DROP TABLE IF EXISTS automations;
+          DROP TABLE IF EXISTS patterns;
+        `,
+      },
     ];
   }
 
   /**
    * Cleanup old patterns (>30 days)
    * Called periodically or on app quit
+   * Note: After migration v4, uses 'created_at' column
    */
   public cleanupOldPatterns(): void {
     if (!this.db) {
@@ -441,9 +511,7 @@ export class DatabaseManager {
 
     try {
       const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-      const stmt = this.db.prepare(
-        "DELETE FROM patterns WHERE last_seen_at < ?",
-      );
+      const stmt = this.db.prepare("DELETE FROM patterns WHERE created_at < ?");
       const result = stmt.run(thirtyDaysAgo);
 
       log.info(`[Database] Cleaned up ${result.changes} old patterns`);
