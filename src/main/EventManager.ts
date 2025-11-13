@@ -12,6 +12,13 @@ import {
   SaveAutomationSchema,
   ExecuteAutomationSchema,
 } from "./schemas/patternSchemas";
+import { MonitorManager } from "./MonitorManager";
+import {
+  MonitorCreateSchema,
+  MonitorUpdateSchema,
+  MonitorDeleteSchema,
+  MonitorGetAllSchema,
+} from "./schemas/monitorSchemas";
 import { z } from "zod";
 
 export class EventManager {
@@ -35,6 +42,9 @@ export class EventManager {
 
     // Pattern events
     this.handlePatternEvents();
+
+    // Monitor events
+    this.handleMonitorEvents();
 
     // Page content events
     this.handlePageContentEvents();
@@ -483,6 +493,207 @@ export class EventManager {
     });
   }
 
+  private handleMonitorEvents(): void {
+    const monitorManager = MonitorManager.getInstance();
+
+    // Create monitor
+    ipcMain.handle("monitor:create", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("monitor:create", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = MonitorCreateSchema.parse(data);
+
+        // Call MonitorManager
+        return await monitorManager.createMonitor(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Pause monitor
+    ipcMain.handle("monitor:pause", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("monitor:pause", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = MonitorUpdateSchema.parse(data);
+
+        // Call MonitorManager
+        return await monitorManager.pauseMonitor(validated.id);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Resume monitor
+    ipcMain.handle("monitor:resume", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("monitor:resume", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = MonitorUpdateSchema.parse(data);
+
+        // Call MonitorManager
+        return await monitorManager.resumeMonitor(validated.id);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Delete monitor
+    ipcMain.handle("monitor:delete", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("monitor:delete", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = MonitorDeleteSchema.parse(data);
+
+        // Call MonitorManager
+        return await monitorManager.deleteMonitor(validated.id);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Get all monitors
+    ipcMain.handle("monitor:get-all", async (_, filters) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("monitor:get-all", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation (optional filters)
+        const validated = filters
+          ? MonitorGetAllSchema.parse(filters)
+          : undefined;
+
+        // Call MonitorManager
+        return await monitorManager.getAllMonitors(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+  }
+
   private handlePageContentEvents(): void {
     // Get page content
     ipcMain.handle("get-page-content", async () => {
@@ -615,6 +826,36 @@ export class EventManager {
         "pattern:automation-completed",
         result,
       );
+    }
+  }
+
+  // Broadcast monitor status changed event to sidebar
+  public broadcastMonitorStatusChanged(monitor: {
+    id: string;
+    url: string;
+    status: string;
+    updated_at: number;
+  }): void {
+    // Security check: validate WebContents ID before sending
+    if (this.mainWindow.sidebar.view.webContents) {
+      this.mainWindow.sidebar.view.webContents.send(
+        "monitor:status-changed",
+        monitor,
+      );
+    }
+  }
+
+  // Broadcast monitor alert event to sidebar
+  public broadcastMonitorAlert(alert: {
+    monitor_id: string;
+    url: string;
+    change_summary: string;
+    severity: string;
+    created_at: number;
+  }): void {
+    // Security check: validate WebContents ID before sending
+    if (this.mainWindow.sidebar.view.webContents) {
+      this.mainWindow.sidebar.view.webContents.send("monitor:alert", alert);
     }
   }
 

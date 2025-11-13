@@ -160,6 +160,47 @@ const sidebarAPI = {
       );
     },
   },
+
+  // Monitor management functionality
+  monitor: {
+    create: (data: {
+      url: string;
+      goal?: string;
+      frequency: "1h" | "2h" | "4h" | "6h";
+    }) => electronAPI.ipcRenderer.invoke("monitor:create", data),
+
+    pause: (id: string) =>
+      electronAPI.ipcRenderer.invoke("monitor:pause", { id }),
+
+    resume: (id: string) =>
+      electronAPI.ipcRenderer.invoke("monitor:resume", { id }),
+
+    delete: (id: string) =>
+      electronAPI.ipcRenderer.invoke("monitor:delete", { id }),
+
+    getAll: (filters?: { status?: "active" | "paused" | "error" }) =>
+      electronAPI.ipcRenderer.invoke("monitor:get-all", filters),
+
+    onStatusChanged: (callback: (monitor: unknown) => void) => {
+      electronAPI.ipcRenderer.on("monitor:status-changed", (_, monitor) =>
+        callback(monitor),
+      );
+    },
+
+    removeStatusChangedListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("monitor:status-changed");
+    },
+
+    onAlert: (callback: (alert: unknown) => void) => {
+      electronAPI.ipcRenderer.on("monitor:alert", (_, alert) =>
+        callback(alert),
+      );
+    },
+
+    removeAlertListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("monitor:alert");
+    },
+  },
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

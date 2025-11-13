@@ -75,6 +75,32 @@ interface PatternAPIResponse<T = unknown> {
   };
 }
 
+interface Monitor {
+  id: string;
+  url: string;
+  goal?: string;
+  frequency: "1h" | "2h" | "4h" | "6h";
+  status: "active" | "paused" | "error";
+  last_check?: number;
+  created_at: number;
+  updated_at: number;
+}
+
+interface MonitorCreateInput {
+  url: string;
+  goal?: string;
+  frequency: "1h" | "2h" | "4h" | "6h";
+}
+
+interface MonitorAPIResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 interface SidebarAPI {
   // Chat functionality
   sendChatMessage: (request: Partial<ChatRequest>) => Promise<void>;
@@ -143,6 +169,29 @@ interface SidebarAPI {
       }) => void,
     ) => void;
     removeAutomationCompletedListener: () => void;
+  };
+
+  // Monitor management functionality
+  monitor: {
+    create: (data: MonitorCreateInput) => Promise<MonitorAPIResponse<Monitor>>;
+    pause: (id: string) => Promise<MonitorAPIResponse<Monitor>>;
+    resume: (id: string) => Promise<MonitorAPIResponse<Monitor>>;
+    delete: (id: string) => Promise<MonitorAPIResponse<{ id: string }>>;
+    getAll: (filters?: {
+      status?: "active" | "paused" | "error";
+    }) => Promise<MonitorAPIResponse<Monitor[]>>;
+    onStatusChanged: (callback: (monitor: Monitor) => void) => void;
+    removeStatusChangedListener: () => void;
+    onAlert: (
+      callback: (alert: {
+        monitor_id: string;
+        url: string;
+        change_summary: string;
+        severity: string;
+        created_at: number;
+      }) => void,
+    ) => void;
+    removeAlertListener: () => void;
   };
 }
 

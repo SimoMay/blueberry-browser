@@ -7,6 +7,7 @@ import { DatabaseManager } from "./database/Database";
 import { PreferencesStore } from "./store/PreferencesStore";
 import { NotificationManager } from "./NotificationManager";
 import { PatternManager } from "./PatternManager";
+import { MonitorManager } from "./MonitorManager";
 import log from "electron-log";
 
 let mainWindow: Window | null = null;
@@ -15,6 +16,7 @@ let menu: AppMenu | null = null;
 let database: DatabaseManager | null = null;
 let notificationManager: NotificationManager | null = null;
 let patternManager: PatternManager | null = null;
+let monitorManager: MonitorManager | null = null;
 
 // Export database and preferences for use in other modules
 export let db: DatabaseManager | null = null;
@@ -51,6 +53,11 @@ app.whenReady().then(async () => {
     patternManager = PatternManager.getInstance();
     await patternManager.initialize();
     log.info("[App] Pattern manager initialized successfully");
+
+    log.info("[App] Initializing monitor manager...");
+    monitorManager = MonitorManager.getInstance();
+    await monitorManager.initialize();
+    log.info("[App] Monitor manager initialized successfully");
   } catch (error) {
     log.error("[App] Failed to initialize infrastructure:", error);
     // Continue anyway - UI can show error state
