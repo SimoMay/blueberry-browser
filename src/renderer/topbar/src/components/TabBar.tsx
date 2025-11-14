@@ -1,5 +1,5 @@
 import React from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X, Bot } from "lucide-react";
 import { useBrowser } from "../contexts/BrowserContext";
 import { Favicon } from "../components/Favicon";
 import { TabBarButton } from "../components/TabBarButton";
@@ -11,6 +11,7 @@ interface TabItemProps {
   favicon?: string | null;
   isActive: boolean;
   isPinned?: boolean;
+  isAutomationMode?: boolean;
   onClose: () => void;
   onActivate: () => void;
 }
@@ -20,6 +21,7 @@ const TabItem: React.FC<TabItemProps> = ({
   favicon,
   isActive,
   isPinned = false,
+  isAutomationMode = false,
   onClose,
   onActivate,
 }) => {
@@ -27,15 +29,27 @@ const TabItem: React.FC<TabItemProps> = ({
     "relative flex items-center h-8 pl-2 pr-1.5 select-none rounded-md",
     "text-primary group/tab transition-all duration-200 cursor-pointer",
     "app-region-no-drag", // Make tabs clickable
-    isActive
-      ? "bg-background shadow-tab dark:bg-secondary dark:shadow-none"
-      : "bg-transparent hover:bg-muted/50 dark:hover:bg-muted/30",
+    // Automation mode styling - blue border and subtle background
+    isAutomationMode &&
+      "border-2 border-blue-500 dark:border-blue-400 bg-blue-50/50 dark:bg-blue-900/20",
+    // Regular active/inactive styling (unless in automation mode)
+    !isAutomationMode &&
+      (isActive
+        ? "bg-background shadow-tab dark:bg-secondary dark:shadow-none"
+        : "bg-transparent hover:bg-muted/50 dark:hover:bg-muted/30"),
     isPinned ? "w-8 !px-0 justify-center" : "",
   );
 
   return (
     <div className="py-1 px-0.5">
       <div className={baseClassName} onClick={() => !isActive && onActivate()}>
+        {/* Automation mode indicator */}
+        {isAutomationMode && (
+          <div className="mr-1 flex-shrink-0">
+            <Bot className="size-3.5 text-blue-600 dark:text-blue-400" />
+          </div>
+        )}
+
         {/* Favicon */}
         <div className={cn(!isPinned && "mr-2")}>
           <Favicon src={favicon} />
@@ -101,6 +115,7 @@ export const TabBar: React.FC = () => {
             title={tab.title}
             favicon={getFavicon(tab.url)}
             isActive={tab.isActive}
+            isAutomationMode={tab.isAutomationMode}
             onClose={() => closeTab(tab.id)}
             onActivate={() => switchTab(tab.id)}
           />

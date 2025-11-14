@@ -138,9 +138,6 @@ const sidebarAPI = {
     dismiss: (data: { patternId: string }) =>
       electronAPI.ipcRenderer.invoke("pattern:dismiss", data),
 
-    executeAutomation: (automation_id: string) =>
-      electronAPI.ipcRenderer.invoke("pattern:execute", { automation_id }),
-
     onDetected: (callback: (pattern: unknown) => void) => {
       electronAPI.ipcRenderer.on("pattern:detected", (_, pattern) =>
         callback(pattern),
@@ -150,17 +147,72 @@ const sidebarAPI = {
     removeDetectedListener: () => {
       electronAPI.ipcRenderer.removeAllListeners("pattern:detected");
     },
+  },
 
-    onAutomationCompleted: (callback: (result: unknown) => void) => {
-      electronAPI.ipcRenderer.on("pattern:automation-completed", (_, result) =>
-        callback(result),
+  // Automation execution and management (Story 1.10)
+  automations: {
+    getAll: () => electronAPI.ipcRenderer.invoke("pattern:get-automations"),
+
+    execute: (automationId: string) =>
+      electronAPI.ipcRenderer.invoke(
+        "pattern:execute-automation",
+        automationId,
+      ),
+
+    edit: (data: {
+      automationId: string;
+      name: string;
+      description?: string;
+    }) => electronAPI.ipcRenderer.invoke("pattern:edit-automation", data),
+
+    delete: (automationId: string) =>
+      electronAPI.ipcRenderer.invoke("pattern:delete-automation", automationId),
+
+    onProgress: (
+      callback: (data: {
+        automationId: string;
+        currentStep: number;
+        totalSteps: number;
+        stepDescription: string;
+      }) => void,
+    ) => {
+      electronAPI.ipcRenderer.on("automation:progress", (_, data) =>
+        callback(data),
       );
     },
 
-    removeAutomationCompletedListener: () => {
-      electronAPI.ipcRenderer.removeAllListeners(
-        "pattern:automation-completed",
+    removeProgressListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("automation:progress");
+    },
+
+    onComplete: (
+      callback: (data: {
+        automationId: string;
+        success: boolean;
+        stepsExecuted: number;
+        error?: string;
+      }) => void,
+    ) => {
+      electronAPI.ipcRenderer.on("automation:complete", (_, data) =>
+        callback(data),
       );
+    },
+
+    removeCompleteListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("automation:complete");
+    },
+
+    // Convenience methods for event management
+    on: (event: "progress" | "complete", callback: (data: unknown) => void) => {
+      const eventName =
+        event === "progress" ? "automation:progress" : "automation:complete";
+      electronAPI.ipcRenderer.on(eventName, (_, data) => callback(data));
+    },
+
+    removeListener: (event: "progress" | "complete") => {
+      const eventName =
+        event === "progress" ? "automation:progress" : "automation:complete";
+      electronAPI.ipcRenderer.removeAllListeners(eventName);
     },
   },
 

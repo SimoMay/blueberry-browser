@@ -11,6 +11,8 @@ import {
   PatternGetAllSchema,
   SaveAutomationSchema,
   ExecuteAutomationSchema,
+  EditAutomationSchema,
+  DeleteAutomationSchema,
 } from "./schemas/patternSchemas";
 import { MonitorManager } from "./MonitorManager";
 import {
@@ -81,6 +83,7 @@ export class EventManager {
         title: tab.title,
         url: tab.url,
         isActive: activeTabId === tab.id,
+        isAutomationMode: tab.isAutomationMode,
       }));
     });
 
@@ -484,10 +487,157 @@ export class EventManager {
     );
 
     // Execute automation
-    ipcMain.handle("pattern:execute", async (_, data) => {
+    ipcMain.handle("pattern:execute-automation", async (_, automationId) => {
+      try {
+        // Rate limiting (10 executions per minute = ~0.17 per second)
+        // Using 1 per second as a safer limit
+        if (!this.checkRateLimit("pattern:execute-automation", 1)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message:
+                "Too many automation executions. Please wait before retrying.",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = ExecuteAutomationSchema.parse({
+          automation_id: automationId,
+        });
+
+        // TODO: Replace with toast notifications instead of persistent notifications
+        // System notifications don't fit the notification panel interaction model
+        // (they're not clickable like pattern notifications)
+        //
+        // Get automation details for notification
+        // const notificationManager = NotificationManager.getInstance();
+        // const automationsResult = await patternManager.getAutomations();
+        // const automation = automationsResult.data?.find(
+        //   (a) => a.id === validated.automation_id,
+        // );
+        // const automationName = automation?.name || "Automation";
+        //
+        // Create notification for automation start
+        // const startNotification = await notificationManager.createNotification({
+        //   type: "system",
+        //   severity: "info",
+        //   title: "Automation Started",
+        //   message: `Executing "${automationName}"...`,
+        // });
+        // if (startNotification) {
+        //   this.broadcastNotification(startNotification);
+        // }
+
+        // Progress callback to emit IPC events to sidebar
+        const onProgress = (
+          step: number,
+          total: number,
+          description: string,
+        ): void => {
+          this.mainWindow.sidebar.view.webContents.send("automation:progress", {
+            automationId: validated.automation_id,
+            currentStep: step,
+            totalSteps: total,
+            stepDescription: description,
+          });
+        };
+
+        // Call PatternManager with Window instance and progress callback
+        const result = await patternManager.executeAutomation(
+          validated.automation_id,
+          this.mainWindow,
+          onProgress,
+        );
+
+        // TODO: Replace with toast notifications instead of persistent notifications
+        // Create notification for automation completion
+        // if (result.success) {
+        //   const successNotification =
+        //     await notificationManager.createNotification({
+        //       type: "system",
+        //       severity: "info",
+        //       title: "Automation Completed",
+        //       message: `"${automationName}" completed successfully (${result.data?.stepsExecuted || 0} steps)`,
+        //     });
+        //   if (successNotification) {
+        //     this.broadcastNotification(successNotification);
+        //   }
+        // } else {
+        //   const errorNotification =
+        //     await notificationManager.createNotification({
+        //       type: "system",
+        //       severity: "error",
+        //       title: "Automation Failed",
+        //       message: `"${automationName}" failed: ${result.error?.message || "Unknown error"}`,
+        //     });
+        //   if (errorNotification) {
+        //     this.broadcastNotification(errorNotification);
+        //   }
+        // }
+
+        // Emit completion event to sidebar
+        this.mainWindow.sidebar.view.webContents.send("automation:complete", {
+          automationId: validated.automation_id,
+          success: result.success,
+          stepsExecuted: result.data?.stepsExecuted || 0,
+          error: result.error?.message,
+        });
+
+        return result;
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Get all automations
+    ipcMain.handle("pattern:get-automations", async () => {
       try {
         // Rate limiting
-        if (!this.checkRateLimit("pattern:execute", 50)) {
+        if (!this.checkRateLimit("pattern:get-automations", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Call PatternManager
+        return await patternManager.getAutomations();
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Edit automation
+    ipcMain.handle("pattern:edit-automation", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:edit-automation", 50)) {
           return {
             success: false,
             error: {
@@ -498,10 +648,49 @@ export class EventManager {
         }
 
         // Zod validation
-        const validated = ExecuteAutomationSchema.parse(data);
+        const validated = EditAutomationSchema.parse(data);
 
         // Call PatternManager
-        return await patternManager.executeAutomation(validated);
+        return await patternManager.editAutomation(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Delete automation
+    ipcMain.handle("pattern:delete-automation", async (_, automationId) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:delete-automation", 50)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = DeleteAutomationSchema.parse({ automationId });
+
+        // Call PatternManager
+        return await patternManager.deleteAutomation(validated.automationId);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {

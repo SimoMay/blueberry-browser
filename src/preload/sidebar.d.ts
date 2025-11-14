@@ -157,19 +157,48 @@ interface SidebarAPI {
       description?: string;
     }) => Promise<PatternAPIResponse<Automation>>;
     dismiss: (data: { patternId: string }) => Promise<PatternAPIResponse>;
-    executeAutomation: (
-      automation_id: string,
-    ) => Promise<PatternAPIResponse<{ execution_result: string }>>;
     onDetected: (callback: (pattern: Pattern) => void) => void;
     removeDetectedListener: () => void;
-    onAutomationCompleted: (
-      callback: (result: {
-        automation_id: string;
-        success: boolean;
-        result: unknown;
+  };
+
+  // Automation execution and management (Story 1.10)
+  automations: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    getAll: () => Promise<PatternAPIResponse<any[]>>;
+    execute: (
+      automationId: string,
+    ) => Promise<
+      PatternAPIResponse<{ stepsExecuted: number; duration: number }>
+    >;
+    edit: (data: {
+      automationId: string;
+      name: string;
+      description?: string;
+    }) => Promise<PatternAPIResponse>;
+    delete: (automationId: string) => Promise<PatternAPIResponse>;
+    onProgress: (
+      callback: (data: {
+        automationId: string;
+        currentStep: number;
+        totalSteps: number;
+        stepDescription: string;
       }) => void,
     ) => void;
-    removeAutomationCompletedListener: () => void;
+    removeProgressListener: () => void;
+    onComplete: (
+      callback: (data: {
+        automationId: string;
+        success: boolean;
+        stepsExecuted: number;
+        error?: string;
+      }) => void,
+    ) => void;
+    removeCompleteListener: () => void;
+    on: (
+      event: "progress" | "complete",
+      callback: (data: unknown) => void,
+    ) => void;
+    removeListener: (event: "progress" | "complete") => void;
   };
 
   // Monitor management functionality

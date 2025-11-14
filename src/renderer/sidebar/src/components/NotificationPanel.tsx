@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
   Bell,
@@ -36,9 +36,19 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
   onBackToChat,
   onPatternClick,
 }) => {
-  const { notifications, dismissNotification, markAllRead, loading } =
-    useNotifications();
+  const {
+    notifications,
+    dismissNotification,
+    markAllRead,
+    refreshNotifications,
+    loading,
+  } = useNotifications();
   const [showTestPanel, setShowTestPanel] = useState(false);
+
+  // Refresh notifications when panel becomes visible
+  useEffect(() => {
+    refreshNotifications();
+  }, [refreshNotifications]);
 
   // Filter out dismissed notifications for active view
   const activeNotifications = notifications.filter(
@@ -103,31 +113,38 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-gray-900">
+    <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex items-center gap-2">
+      <div className="sticky top-0 z-10 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bell className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              Notifications
+            </h2>
+          </div>
           {onBackToChat && (
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={onBackToChat}
-              className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400"
-              title="Back to chat"
+              className="flex items-center gap-1"
             >
-              <MessageSquare className="w-4 h-4" />
-            </button>
-          )}
-          <Bell className="w-5 h-5 text-gray-700 dark:text-gray-300" />
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Notifications
-          </h2>
-          {activeNotifications.length > 0 && (
-            <span className="px-2 py-0.5 text-xs font-medium text-white bg-blue-500 rounded-full">
-              {activeNotifications.length}
-            </span>
+              <MessageSquare className="h-4 w-4" />
+              Chat
+            </Button>
           )}
         </div>
+        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+          {activeNotifications.length === 0
+            ? "No unread notifications"
+            : `${activeNotifications.length} ${activeNotifications.length === 1 ? "notification" : "notifications"}`}
+        </p>
+      </div>
 
-        <div className="flex gap-2">
+      {/* Action Bar */}
+      <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="flex gap-2 items-center justify-between">
           <button
             onClick={() => setShowTestPanel(!showTestPanel)}
             className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400"

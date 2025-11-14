@@ -38,7 +38,7 @@ interface PatternRow {
  * - Levenshtein distance for navigation sequence similarity
  * - Jaccard similarity for form field set comparison
  * - Confidence scoring: (occurrence_count * consistency) / 5 * 100
- * - Notification threshold: occurrence_count >= 3 AND confidence > 70%
+ * - Notification threshold: occurrence_count >= 2 AND confidence > 50% (balanced for usability)
  * - Performance target: <2 seconds per run
  * - CPU usage: <15% during recognition
  * - Memory overhead: <50MB
@@ -53,8 +53,8 @@ export class PatternRecognizer {
 
   // Configuration constants
   private readonly SIMILARITY_THRESHOLD = 0.8; // 80% similarity for pattern grouping
-  private readonly CONFIDENCE_THRESHOLD = 70; // Minimum confidence for notifications
-  private readonly OCCURRENCE_THRESHOLD = 3; // Minimum occurrences for notifications
+  private readonly CONFIDENCE_THRESHOLD = 50; // Minimum confidence for notifications (balanced for usability)
+  private readonly OCCURRENCE_THRESHOLD = 2; // Minimum occurrences for notifications (balanced for usability)
   private readonly INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
   /**
@@ -540,7 +540,7 @@ export class PatternRecognizer {
 
   /**
    * Trigger notifications for patterns meeting threshold
-   * Patterns must have: occurrence_count >= 3 AND confidence > 70%
+   * Patterns must have: occurrence_count >= 2 AND confidence > 50% (balanced for usability)
    *
    * @param patterns Recognized patterns to check for notification
    */

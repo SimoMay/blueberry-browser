@@ -8,6 +8,7 @@ export class Tab {
   private _title: string;
   private _url: string;
   private _isVisible: boolean = false;
+  private _isAutomationMode: boolean = false; // Skip pattern tracking during automation
   private formSubmissionTimestamps: number[] = []; // Track timestamps for rate limiting
 
   constructor(id: string, url: string = "https://www.google.com") {
@@ -63,18 +64,20 @@ export class Tab {
     this.webContentsView.webContents.on("did-navigate", async (_, url) => {
       this._url = url;
 
-      // Track navigation pattern
-      const timestamp = Date.now();
-      try {
-        const patternManager = PatternManager.getInstance();
-        await patternManager.trackNavigation({
-          url,
-          tabId: this._id,
-          timestamp,
-          eventType: "did-navigate",
-        });
-      } catch (error) {
-        log.error("[Tab] Navigation tracking error:", error);
+      // Track navigation pattern (skip if in automation mode)
+      if (!this._isAutomationMode) {
+        const timestamp = Date.now();
+        try {
+          const patternManager = PatternManager.getInstance();
+          await patternManager.trackNavigation({
+            url,
+            tabId: this._id,
+            timestamp,
+            eventType: "did-navigate",
+          });
+        } catch (error) {
+          log.error("[Tab] Navigation tracking error:", error);
+        }
       }
     });
 
@@ -83,25 +86,33 @@ export class Tab {
       async (_, url) => {
         this._url = url;
 
-        // Track in-page navigation pattern (SPA transitions)
-        const timestamp = Date.now();
-        try {
-          const patternManager = PatternManager.getInstance();
-          await patternManager.trackNavigation({
-            url,
-            tabId: this._id,
-            timestamp,
-            eventType: "did-navigate-in-page",
-          });
-        } catch (error) {
-          log.error("[Tab] In-page navigation tracking error:", error);
+        // Track in-page navigation pattern (skip if in automation mode)
+        if (!this._isAutomationMode) {
+          const timestamp = Date.now();
+          try {
+            const patternManager = PatternManager.getInstance();
+            await patternManager.trackNavigation({
+              url,
+              tabId: this._id,
+              timestamp,
+              eventType: "did-navigate-in-page",
+            });
+          } catch (error) {
+            log.error("[Tab] In-page navigation tracking error:", error);
+          }
         }
       },
     );
 
-    // Inject form tracking script on page load
+    // Inject form tracking script and automation overlay on page load
     this.webContentsView.webContents.on("did-finish-load", async () => {
       await this.injectFormTrackingScript();
+
+      // Re-inject automation overlay if in automation mode
+      // (navigations clear the overlay, so we need to re-inject)
+      if (this._isAutomationMode) {
+        await this.injectAutomationOverlay();
+      }
     });
 
     // Listen for console messages from injected script (form tracking workaround for sandbox)
@@ -357,6 +368,10 @@ export class Tab {
     return this._isVisible;
   }
 
+  get isAutomationMode(): boolean {
+    return this._isAutomationMode;
+  }
+
   get webContents(): WebContents {
     return this.webContentsView.webContents;
   }
@@ -366,6 +381,144 @@ export class Tab {
   }
 
   // Public methods
+  /**
+   * Enable/disable automation mode
+   * When enabled, pattern tracking is skipped for this tab
+   * Also creates/removes visual overlay to indicate AI control
+   */
+  setAutomationMode(enabled: boolean): void {
+    this._isAutomationMode = enabled;
+
+    // Create or remove automation overlay view
+    if (enabled) {
+      this.createAutomationOverlay();
+    } else {
+      this.removeAutomationOverlay();
+    }
+  }
+
+  /**
+   * Create automation overlay by injecting CSS into the page
+   * Note: WebContentsView doesn't support transparency (Electron bug),
+   * so we inject directly into the page DOM instead
+   */
+  private createAutomationOverlay(): void {
+    try {
+      // Inject overlay immediately
+      this.injectAutomationOverlay();
+
+      log.info("[Tab] Automation overlay injection scheduled");
+    } catch (error) {
+      log.error("[Tab] Automation overlay creation error:", error);
+    }
+  }
+
+  /**
+   * Inject automation overlay CSS and HTML
+   */
+  private async injectAutomationOverlay(): Promise<void> {
+    try {
+      await this.webContentsView.webContents.executeJavaScript(`
+        (function() {
+          // Remove existing overlay if present
+          const existing = document.getElementById('__blueberry-automation-overlay');
+          if (existing) existing.remove();
+
+          // Create style element
+          const style = document.createElement('style');
+          style.id = '__blueberry-automation-overlay-style';
+          style.textContent = \`
+            #__blueberry-automation-overlay {
+              position: fixed !important;
+              top: 0 !important;
+              left: 0 !important;
+              right: 0 !important;
+              bottom: 0 !important;
+              background: rgba(59, 130, 246, 0.08) !important;
+              backdrop-filter: blur(0.5px) !important;
+              -webkit-backdrop-filter: blur(0.5px) !important;
+              z-index: 2147483647 !important;
+              display: flex !important;
+              align-items: flex-start !important;
+              justify-content: center !important;
+              padding-top: 60px !important;
+              pointer-events: auto !important;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+            }
+            #__blueberry-automation-badge {
+              background: rgba(37, 99, 235, 0.95) !important;
+              color: white !important;
+              padding: 12px 24px !important;
+              border-radius: 8px !important;
+              font-size: 14px !important;
+              font-weight: 600 !important;
+              box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+              display: flex !important;
+              align-items: center !important;
+              gap: 10px !important;
+              animation: __blueberry_slideDown 0.3s ease-out !important;
+            }
+            @keyframes __blueberry_slideDown {
+              from { opacity: 0; transform: translateY(-20px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+          \`;
+
+          // Insert style into head (or create head if it doesn't exist)
+          const head = document.head || document.getElementsByTagName('head')[0] || document.documentElement;
+          head.insertBefore(style, head.firstChild);
+
+          // Create overlay element
+          const overlay = document.createElement('div');
+          overlay.id = '__blueberry-automation-overlay';
+          overlay.innerHTML = \`
+            <div id="__blueberry-automation-badge">
+              <span style="font-size: 20px;">🤖</span>
+              <span>Automation Running - AI Controlled</span>
+            </div>
+          \`;
+
+          // Insert into body (or create body if it doesn't exist)
+          const body = document.body || document.getElementsByTagName('body')[0] || document.documentElement;
+          body.appendChild(overlay);
+
+          // Prevent user interactions
+          overlay.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+          overlay.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+          overlay.addEventListener('keydown', (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+        })();
+      `);
+    } catch (error) {
+      log.error("[Tab] Automation overlay injection error:", error);
+    }
+  }
+
+  /**
+   * Remove automation overlay
+   */
+  private removeAutomationOverlay(): void {
+    try {
+      this.webContentsView.webContents
+        .executeJavaScript(
+          `
+        (function() {
+          const overlay = document.getElementById('__blueberry-automation-overlay');
+          if (overlay) overlay.remove();
+          const style = document.getElementById('__blueberry-automation-overlay-style');
+          if (style) style.remove();
+        })();
+      `,
+        )
+        .catch((err) => {
+          log.error("[Tab] Automation overlay removal error:", err);
+        });
+
+      log.info("[Tab] Automation overlay removed");
+    } catch (error) {
+      log.error("[Tab] Automation overlay removal error:", error);
+    }
+  }
+
   show(): void {
     this._isVisible = true;
     this.webContentsView.setVisible(true);

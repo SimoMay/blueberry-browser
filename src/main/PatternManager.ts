@@ -6,7 +6,6 @@ import {
   PatternTrackInput,
   PatternGetAllInput,
   SaveAutomationInput,
-  ExecuteAutomationInput,
 } from "./schemas/patternSchemas";
 
 /**
@@ -248,6 +247,18 @@ export class PatternManager {
 
       log.info("[PatternManager] Save automation:", data.name);
 
+      // Fetch pattern data to include in automation
+      const patternStmt = this.db.prepare(`
+        SELECT pattern_data FROM patterns WHERE id = ?
+      `);
+      const patternRow = patternStmt.get(data.pattern_id) as
+        | { pattern_data: string }
+        | undefined;
+
+      if (!patternRow) {
+        throw new Error(`Pattern not found: ${data.pattern_id}`);
+      }
+
       // Create automation object
       const automation: Automation = {
         id: uuidv4(),
@@ -257,10 +268,10 @@ export class PatternManager {
         created_at: Date.now(),
       };
 
-      // Insert into database
+      // Insert into database with pattern_data
       const stmt = this.db.prepare(`
-        INSERT INTO automations (id, pattern_id, name, description, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO automations (id, pattern_id, name, description, pattern_data, execution_count, last_executed, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
@@ -268,6 +279,9 @@ export class PatternManager {
         automation.pattern_id,
         automation.name,
         automation.description || null,
+        patternRow.pattern_data,
+        0, // execution_count starts at 0
+        null, // last_executed is null initially
         automation.created_at,
       );
 
@@ -337,32 +351,267 @@ export class PatternManager {
   }
 
   /**
-   * Execute an automation
-   * Execution logic will be implemented in Story 1.10
+   * Get all automations with full details including pattern data and execution stats
    */
-  public async executeAutomation(
-    data: ExecuteAutomationInput,
-  ): Promise<IPCResponse<{ execution_result: string }>> {
+  public async getAutomations(): Promise<
+    IPCResponse<
+      Array<{
+        id: string;
+        patternId: string;
+        name: string;
+        description?: string;
+        patternData: NavigationPattern | FormPattern;
+        patternType: string;
+        executionCount: number;
+        lastExecuted?: number;
+        createdAt: number;
+      }>
+    >
+  > {
     try {
       if (!this.db) {
         throw new Error("PatternManager not initialized");
       }
 
-      log.info("[PatternManager] Execute automation:", data.automation_id);
+      log.info("[PatternManager] Getting all automations");
 
-      // Placeholder: Execution logic will be implemented in Story 1.10
-      const result = {
-        execution_result: `Automation ${data.automation_id} execution placeholder`,
-      };
+      const stmt = this.db.prepare(`
+        SELECT
+          a.id,
+          a.pattern_id as patternId,
+          a.name,
+          a.description,
+          a.pattern_data as patternData,
+          a.execution_count as executionCount,
+          a.last_executed as lastExecuted,
+          a.created_at as createdAt,
+          p.type as patternType
+        FROM automations a
+        LEFT JOIN patterns p ON a.pattern_id = p.id
+        ORDER BY a.created_at DESC
+      `);
 
-      log.info(
-        "[PatternManager] Automation executed successfully:",
-        data.automation_id,
-      );
+      const rows = stmt.all() as Array<{
+        id: string;
+        patternId: string;
+        name: string;
+        description?: string;
+        patternData: string;
+        patternType: string;
+        executionCount: number;
+        lastExecuted?: number;
+        createdAt: number;
+      }>;
+
+      // Parse pattern_data JSON for each automation
+      const automations = rows.map((row) => ({
+        id: row.id,
+        patternId: row.patternId,
+        name: row.name,
+        description: row.description,
+        patternData: JSON.parse(row.patternData),
+        patternType: row.patternType,
+        executionCount: row.executionCount,
+        lastExecuted: row.lastExecuted || undefined,
+        createdAt: row.createdAt,
+      }));
+
+      log.info(`[PatternManager] Retrieved ${automations.length} automations`);
 
       return {
         success: true,
-        data: result,
+        data: automations,
+      };
+    } catch (error) {
+      log.error("[PatternManager] Get automations error:", error);
+      return {
+        success: false,
+        error: {
+          code: "QUERY_ERROR",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      };
+    }
+  }
+
+  /**
+   * Edit automation (update name and description)
+   */
+  public async editAutomation(data: {
+    automationId: string;
+    name: string;
+    description?: string;
+  }): Promise<IPCResponse<void>> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      log.info("[PatternManager] Editing automation:", data.automationId);
+
+      const stmt = this.db.prepare(`
+        UPDATE automations
+        SET name = ?, description = ?
+        WHERE id = ?
+      `);
+
+      const result = stmt.run(
+        data.name,
+        data.description || null,
+        data.automationId,
+      );
+
+      if (result.changes === 0) {
+        throw new Error("Automation not found");
+      }
+
+      log.info("[PatternManager] Automation edited successfully");
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      log.error("[PatternManager] Edit automation error:", error);
+      return {
+        success: false,
+        error: {
+          code: "UPDATE_ERROR",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      };
+    }
+  }
+
+  /**
+   * Delete automation
+   */
+  public async deleteAutomation(
+    automationId: string,
+  ): Promise<IPCResponse<void>> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      log.info("[PatternManager] Deleting automation:", automationId);
+
+      const stmt = this.db.prepare(`
+        DELETE FROM automations WHERE id = ?
+      `);
+
+      const result = stmt.run(automationId);
+
+      if (result.changes === 0) {
+        throw new Error("Automation not found");
+      }
+
+      log.info("[PatternManager] Automation deleted successfully");
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      log.error("[PatternManager] Delete automation error:", error);
+      return {
+        success: false,
+        error: {
+          code: "DELETE_ERROR",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      };
+    }
+  }
+
+  /**
+   * Execute an automation using AutomationExecutor
+   * Returns execution result with steps completed and duration
+   */
+  public async executeAutomation(
+    automationId: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    window: any, // Window instance passed from EventManager (circular dependency prevents proper typing)
+    onProgress?: (step: number, total: number, description: string) => void,
+  ): Promise<
+    IPCResponse<{ stepsExecuted: number; duration: number; error?: string }>
+  > {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      log.info("[PatternManager] Execute automation:", automationId);
+
+      // Fetch automation from database
+      const stmt = this.db.prepare(`
+        SELECT
+          a.id,
+          a.pattern_data as patternData,
+          p.type as patternType
+        FROM automations a
+        LEFT JOIN patterns p ON a.pattern_id = p.id
+        WHERE a.id = ?
+      `);
+
+      const automation = stmt.get(automationId) as
+        | {
+            id: string;
+            patternData: string;
+            patternType: "navigation" | "form";
+          }
+        | undefined;
+
+      if (!automation) {
+        throw new Error("Automation not found");
+      }
+
+      // Parse pattern data
+      const patternData = JSON.parse(automation.patternData);
+
+      // Import AutomationExecutor dynamically to avoid circular dependency
+      const { AutomationExecutor } = await import("./AutomationExecutor");
+      const executor = new AutomationExecutor(window);
+
+      // Execute automation
+      const result = await executor.execute(
+        automationId,
+        automation.patternType,
+        patternData,
+        onProgress,
+      );
+
+      if (result.success) {
+        // Update execution_count and last_executed timestamp
+        const updateStmt = this.db.prepare(`
+          UPDATE automations
+          SET execution_count = execution_count + 1,
+              last_executed = ?
+          WHERE id = ?
+        `);
+
+        updateStmt.run(Date.now(), automationId);
+
+        log.info(
+          `[PatternManager] Automation executed successfully: ${automationId} (${result.stepsExecuted} steps in ${result.duration}ms)`,
+        );
+      } else {
+        log.error(
+          `[PatternManager] Automation execution failed: ${automationId}`,
+          result.error,
+        );
+      }
+
+      return {
+        success: result.success,
+        data: {
+          stepsExecuted: result.stepsExecuted,
+          duration: result.duration,
+        },
+        error: result.error
+          ? {
+              code: "EXECUTION_ERROR",
+              message: result.error,
+            }
+          : undefined,
       };
     } catch (error) {
       log.error("[PatternManager] Execute automation error:", error);

@@ -46,9 +46,33 @@ export const ExecuteAutomationSchema = z.object({
 });
 
 /**
+ * Edit automation input schema
+ */
+export const EditAutomationSchema = z.object({
+  automationId: z.string().uuid({ message: "Invalid automation ID format" }),
+  name: z
+    .string()
+    .min(1, { message: "Name is required" })
+    .max(100, { message: "Name must be at most 100 characters" }),
+  description: z
+    .string()
+    .max(500, { message: "Description must be at most 500 characters" })
+    .optional(),
+});
+
+/**
+ * Delete automation input schema
+ */
+export const DeleteAutomationSchema = z.object({
+  automationId: z.string().uuid({ message: "Invalid automation ID format" }),
+});
+
+/**
  * Type exports for TypeScript
  */
 export type PatternTrackInput = z.infer<typeof PatternTrackSchema>;
 export type PatternGetAllInput = z.infer<typeof PatternGetAllSchema>;
 export type SaveAutomationInput = z.infer<typeof SaveAutomationSchema>;
 export type ExecuteAutomationInput = z.infer<typeof ExecuteAutomationSchema>;
+export type EditAutomationInput = z.infer<typeof EditAutomationSchema>;
+export type DeleteAutomationInput = z.infer<typeof DeleteAutomationSchema>;

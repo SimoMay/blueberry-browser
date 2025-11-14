@@ -484,6 +484,9 @@ export class DatabaseManager {
             pattern_id TEXT NOT NULL,
             name TEXT NOT NULL,
             description TEXT,
+            pattern_data TEXT NOT NULL,
+            execution_count INTEGER DEFAULT 0,
+            last_executed INTEGER,
             created_at INTEGER NOT NULL,
             FOREIGN KEY (pattern_id) REFERENCES patterns(id) ON DELETE CASCADE
           );
@@ -493,6 +496,69 @@ export class DatabaseManager {
         down: `
           DROP TABLE IF EXISTS automations;
           DROP TABLE IF EXISTS patterns;
+        `,
+      },
+      {
+        version: 5,
+        up: `
+          -- Story 1.10: Add execution tracking columns to automations
+          -- Note: Migration for existing databases (v4 created without these columns)
+          -- SQLite doesn't support ALTER TABLE ADD COLUMN with NOT NULL and no default,
+          -- so we need to recreate the table if columns are missing
+
+          -- Create new table with updated schema
+          CREATE TABLE IF NOT EXISTS automations_new (
+            id TEXT PRIMARY KEY,
+            pattern_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            pattern_data TEXT NOT NULL,
+            execution_count INTEGER DEFAULT 0,
+            last_executed INTEGER,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (pattern_id) REFERENCES patterns(id) ON DELETE CASCADE
+          );
+
+          -- Copy existing data if old table exists, fetching pattern_data from patterns table
+          INSERT OR IGNORE INTO automations_new (id, pattern_id, name, description, pattern_data, execution_count, last_executed, created_at)
+          SELECT
+            a.id,
+            a.pattern_id,
+            a.name,
+            a.description,
+            COALESCE(p.pattern_data, '{}') as pattern_data,
+            0 as execution_count,
+            NULL as last_executed,
+            a.created_at
+          FROM automations a
+          LEFT JOIN patterns p ON a.pattern_id = p.id
+          WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='automations');
+
+          -- Drop old table and rename new table
+          DROP TABLE IF EXISTS automations;
+          ALTER TABLE automations_new RENAME TO automations;
+
+          -- Recreate index
+          CREATE INDEX idx_automations_pattern ON automations(pattern_id);
+        `,
+        down: `
+          -- Revert to v4 schema (remove execution columns)
+          CREATE TABLE automations_old (
+            id TEXT PRIMARY KEY,
+            pattern_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (pattern_id) REFERENCES patterns(id) ON DELETE CASCADE
+          );
+
+          INSERT INTO automations_old (id, pattern_id, name, description, created_at)
+          SELECT id, pattern_id, name, description, created_at FROM automations;
+
+          DROP TABLE automations;
+          ALTER TABLE automations_old RENAME TO automations;
+
+          CREATE INDEX idx_automations_pattern ON automations(pattern_id);
         `,
       },
     ];

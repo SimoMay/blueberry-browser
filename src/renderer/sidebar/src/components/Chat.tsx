@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
-import { ArrowUp, Plus } from "lucide-react";
+import { ArrowUp, Plus, Zap } from "lucide-react";
 import { useChat } from "../contexts/ChatContext";
 import { cn } from "@common/lib/utils";
 import { Button } from "@common/components/Button";
@@ -363,12 +363,14 @@ interface ChatProps {
   pendingPatternData?: PatternData | null;
   onPatternProcessed?: () => void;
   onPatternActionComplete?: (notificationId: string) => void;
+  onShowAutomations?: () => void;
 }
 
 export const Chat: React.FC<ChatProps> = ({
   pendingPatternData,
   onPatternProcessed,
   onPatternActionComplete,
+  onShowAutomations,
 }) => {
   const {
     messages: chatMessages,
@@ -484,13 +486,34 @@ export const Chat: React.FC<ChatProps> = ({
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto">
         <div className="h-8 max-w-3xl mx-auto px-4 flex items-center justify-between">
-          {/* New Chat Button - Floating */}
-          {messages.length > 0 && (
-            <Button onClick={clearChat} title="Start new chat" variant="ghost">
-              <Plus className="size-4" />
-              New Chat
-            </Button>
-          )}
+          {/* Left side buttons */}
+          <div className="flex gap-2">
+            {messages.length > 0 && (
+              <Button
+                onClick={clearChat}
+                title="Start new chat"
+                variant="ghost"
+              >
+                <Plus className="size-4" />
+                New Chat
+              </Button>
+            )}
+          </div>
+
+          {/* Right side buttons */}
+          <div className="flex gap-2">
+            {onShowAutomations && (
+              <Button
+                onClick={onShowAutomations}
+                title="View automation library"
+                variant="ghost"
+                size="sm"
+              >
+                <Zap className="size-4" />
+                Automations
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="pb-4 relative max-w-3xl mx-auto px-4">

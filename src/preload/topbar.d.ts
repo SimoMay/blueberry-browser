@@ -5,6 +5,7 @@ interface TabInfo {
   title: string;
   url: string;
   isActive: boolean;
+  isAutomationMode: boolean;
 }
 
 interface TopBarAPI {
