@@ -30,7 +30,7 @@ export const PatternGetAllSchema = z
  * Save automation input schema
  */
 export const SaveAutomationSchema = z.object({
-  pattern_id: z.string().uuid({ message: "Invalid pattern ID format" }),
+  pattern_id: z.string().min(1, { message: "Pattern ID is required" }),
   name: z
     .string()
     .min(1, { message: "Name is required" })

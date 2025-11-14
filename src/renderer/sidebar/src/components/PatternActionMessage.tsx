@@ -7,7 +7,7 @@ interface PatternActionMessageProps {
   content: string;
   patternId: string;
   patternData: {
-    patternId: string;
+    id: string;
     patternType: "navigation" | "form";
     confidence: number;
     occurrenceCount: number;
@@ -85,11 +85,16 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
     setIsProcessing(true);
     try {
       // Save automation to database
-      await window.sidebarAPI.pattern.saveAutomation({
+      const result = await window.sidebarAPI.pattern.saveAutomation({
         pattern_id: patternId,
         name: automationName.trim(),
         description: automationDescription.trim() || undefined,
       });
+
+      // Check if save was successful
+      if (!result.success) {
+        throw new Error(result.error?.message || "Failed to save automation");
+      }
 
       // Dismiss notification (updates both DB and local state)
       await dismissNotification(notificationId);
@@ -100,7 +105,9 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
       onDismiss();
     } catch (error) {
       console.error("[PatternActionMessage] Save automation error:", error);
-      onError("Failed to save automation");
+      onError(
+        error instanceof Error ? error.message : "Failed to save automation",
+      );
     } finally {
       setIsProcessing(false);
     }

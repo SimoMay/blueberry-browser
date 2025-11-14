@@ -248,7 +248,7 @@ export class PatternManager {
 
       log.info("[PatternManager] Save automation:", data.name);
 
-      // Placeholder: Database integration will happen in Story 1.10
+      // Create automation object
       const automation: Automation = {
         id: uuidv4(),
         pattern_id: data.pattern_id,
@@ -256,6 +256,20 @@ export class PatternManager {
         description: data.description,
         created_at: Date.now(),
       };
+
+      // Insert into database
+      const stmt = this.db.prepare(`
+        INSERT INTO automations (id, pattern_id, name, description, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+
+      stmt.run(
+        automation.id,
+        automation.pattern_id,
+        automation.name,
+        automation.description || null,
+        automation.created_at,
+      );
 
       log.info(
         "[PatternManager] Automation saved successfully:",

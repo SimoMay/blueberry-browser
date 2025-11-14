@@ -11,7 +11,7 @@ import { PatternActionMessage } from "./PatternActionMessage";
 interface PatternData {
   notificationId: string;
   patternData: {
-    patternId: string;
+    id: string;
     patternType: "navigation" | "form";
     confidence: number;
     occurrenceCount: number;
@@ -323,7 +323,7 @@ const ConversationTurnComponent: React.FC<{
         {turn.assistant.patternData ? (
           <PatternActionMessage
             content={turn.assistant.content}
-            patternId={turn.assistant.patternData.patternData.patternId}
+            patternId={turn.assistant.patternData.patternData.id}
             patternData={turn.assistant.patternData.patternData}
             notificationId={turn.assistant.patternData.notificationId}
             onDismiss={() => {

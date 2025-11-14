@@ -9,7 +9,7 @@ import { useDarkMode } from "@common/hooks/useDarkMode";
 interface PendingPatternData {
   notificationId: string;
   patternData: {
-    patternId: string;
+    id: string;
     patternType: "navigation" | "form";
     confidence: number;
     occurrenceCount: number;
@@ -98,7 +98,7 @@ const SidebarContent: React.FC = () => {
       setPendingPatternData({
         notificationId,
         patternData: {
-          patternId: data.id,
+          id: data.id,
           patternType: data.type as "navigation" | "form",
           confidence: data.confidence,
           occurrenceCount: data.occurrenceCount,
