@@ -8,6 +8,7 @@ import {
   SaveAutomationInput,
 } from "./schemas/patternSchemas";
 import { SaveRecordingInput } from "./schemas/recordingSchemas";
+import { IntentSummarizer } from "./IntentSummarizer"; // Story 1.12
 
 /**
  * Pattern type
@@ -44,6 +45,7 @@ export interface NavigationEvent {
   tabId: string;
   timestamp: number;
   eventType: "did-navigate" | "did-navigate-in-page";
+  pageTitle?: string; // Enhanced context for AI intent summarization (Story 1.12)
 }
 
 /**
@@ -53,6 +55,7 @@ export interface NavigationSequenceItem {
   url: string;
   timestamp: number;
   tabId: string;
+  pageTitle?: string; // Enhanced context for AI intent summarization (Story 1.12)
 }
 
 /**
@@ -75,6 +78,8 @@ export interface FormField {
     | "phone_format"
     | "number_format"
     | "text_format";
+  label?: string; // Enhanced context for AI intent summarization (Story 1.12)
+  sanitizedValue?: string; // Sanitized actual value for non-sensitive fields (Story 1.12 - Code Review fix)
 }
 
 /**
@@ -98,6 +103,29 @@ export interface FormPattern {
 }
 
 /**
+ * Copy/Paste pair data structure (Story 1.7b)
+ */
+export interface CopyPastePair {
+  copiedText?: string; // Plaintext if not sensitive
+  copiedTextHash?: string; // SHA-256 hash if sensitive OR always present
+  sourceUrl: string;
+  sourceElement: string; // CSS selector
+  sourcePageTitle: string;
+  destinationUrl: string;
+  destinationElement: string; // CSS selector
+  destinationPageTitle: string;
+  timestamp: number; // Unix timestamp
+  timeGap: number; // Milliseconds between copy and paste
+}
+
+/**
+ * Copy/Paste pattern structure for JSON storage (Story 1.7b)
+ */
+export interface CopyPastePattern {
+  pairs: CopyPastePair[];
+}
+
+/**
  * Standard IPC response format
  */
 interface IPCResponse<T = unknown> {
@@ -110,12 +138,29 @@ interface IPCResponse<T = unknown> {
 }
 
 /**
+ * Copy event tracking (Story 1.7b)
+ */
+interface CopyEventData {
+  text: string;
+  textHash: string;
+  sourceElement: string;
+  url: string;
+  pageTitle: string;
+  timestamp: number;
+  tabId: string;
+  isSensitive: boolean;
+}
+
+/**
  * PatternManager - Singleton for managing patterns and automations
  * Handles CRUD operations for pattern detection and automation execution
  */
 export class PatternManager {
   private static instance: PatternManager | null = null;
   private db: Database.Database | null = null;
+  private intentSummarizer: IntentSummarizer | null = null; // Story 1.12
+  private recentCopyEvents: CopyEventData[] = []; // Story 1.7b
+  private copyEventCleanupInterval: NodeJS.Timeout | null = null; // Story 1.7b
 
   private constructor() {
     // Private constructor for singleton pattern
@@ -142,8 +187,14 @@ export class PatternManager {
       // Get database instance
       this.db = DatabaseManager.getInstance().getDatabase();
 
+      // Initialize IntentSummarizer (Story 1.12)
+      this.intentSummarizer = IntentSummarizer.getInstance(this.db);
+
       // Run cleanup on startup
       await this.cleanupOldPatterns();
+
+      // Start copy event cleanup interval (Story 1.7b)
+      this.startCopyEventCleanup();
 
       log.info("[PatternManager] Initialized successfully");
     } catch (error) {
@@ -668,6 +719,7 @@ export class PatternManager {
               url: event.url,
               timestamp: event.timestamp,
               tabId: event.tabId,
+              pageTitle: event.pageTitle, // Enhanced context (Story 1.12)
             },
           ],
           sessionGap: SESSION_GAP_MS,
@@ -702,6 +754,7 @@ export class PatternManager {
           url: event.url,
           timestamp: event.timestamp,
           tabId: event.tabId,
+          pageTitle: event.pageTitle, // Enhanced context (Story 1.12)
         });
 
         const updateStmt = this.db.prepare(`
@@ -821,6 +874,24 @@ export class PatternManager {
           occurrenceCount: newOccurrenceCount,
           confidence: newConfidence,
         });
+
+        // Generate intent summaries if confidence >70% (Story 1.12 - AC 1)
+        if (newConfidence > 70 && this.intentSummarizer) {
+          try {
+            const summaries = await this.intentSummarizer.summarizePattern(
+              matchingPattern.id,
+            );
+            log.info(
+              `[PatternManager] Intent summaries for ${matchingPattern.id}:\n  Short: "${summaries.short}"\n  Detailed: "${summaries.detailed}"`,
+            );
+          } catch (summaryError) {
+            log.error(
+              "[PatternManager] Failed to generate intent summaries:",
+              summaryError,
+            );
+            // Continue without summary - pattern is still usable
+          }
+        }
 
         // Trigger notification if threshold reached
         if (newOccurrenceCount === DETECTION_THRESHOLD) {
@@ -1060,11 +1131,355 @@ export class PatternManager {
   }
 
   /**
+   * Start copy event cleanup interval (Story 1.7b)
+   * Cleans expired copy events every minute
+   */
+  private startCopyEventCleanup(): void {
+    // Clean up expired copy events every 60 seconds
+    this.copyEventCleanupInterval = setInterval(() => {
+      this.cleanupExpiredCopyEvents();
+    }, 60000);
+
+    log.info("[PatternManager] Copy event cleanup interval started");
+  }
+
+  /**
+   * Clean up copy events older than 5 minutes (Story 1.7b)
+   */
+  private cleanupExpiredCopyEvents(): void {
+    const COPY_EVENT_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
+    const now = Date.now();
+    const initialCount = this.recentCopyEvents.length;
+
+    this.recentCopyEvents = this.recentCopyEvents.filter(
+      (event) => now - event.timestamp < COPY_EVENT_MAX_AGE_MS,
+    );
+
+    const removed = initialCount - this.recentCopyEvents.length;
+    if (removed > 0) {
+      log.info(
+        `[PatternManager] Cleaned up ${removed} expired copy events (${this.recentCopyEvents.length} remaining)`,
+      );
+    }
+  }
+
+  /**
+   * Track copy/paste workflow (Story 1.7b)
+   * AC 1: Captures copy event with source context, paste event with destination context
+   * AC 1: Links copy-paste pairs (max 5 minute gap)
+   * AC 1: Hashes sensitive content (passwords, credit cards, SSN)
+   * AC 1: Persists patterns with type='copy-paste'
+   */
+  public async trackCopyPaste(data: {
+    copyEvent?: {
+      text: string;
+      sourceElement: string;
+      url: string;
+      pageTitle: string;
+      timestamp: number;
+      tabId: string;
+    };
+    pasteEvent?: {
+      destinationElement: string;
+      url: string;
+      pageTitle: string;
+      timestamp: number;
+      tabId: string;
+    };
+  }): Promise<IPCResponse<void>> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      const COPY_PASTE_MAX_GAP_MS = 5 * 60 * 1000; // 5 minutes
+      const DETECTION_THRESHOLD = 3; // Trigger notification after 3 copy-paste pairs
+      const MAX_COPY_EVENTS = 100; // Limit in-memory storage
+
+      // Handle copy event
+      if (data.copyEvent) {
+        const { text, sourceElement, url, pageTitle, timestamp, tabId } =
+          data.copyEvent;
+
+        // Import crypto for hashing
+        const crypto = await import("crypto");
+
+        // Check if content is sensitive
+        const isSensitive = this.isSensitiveContent(sourceElement, text);
+
+        // Always create hash (for pattern matching)
+        const textHash = crypto.createHash("sha256").update(text).digest("hex");
+
+        // Store copy event in memory
+        const copyEventData: CopyEventData = {
+          text: isSensitive ? "" : text, // Don't store plaintext if sensitive
+          textHash,
+          sourceElement,
+          url,
+          pageTitle,
+          timestamp,
+          tabId,
+          isSensitive,
+        };
+
+        this.recentCopyEvents.push(copyEventData);
+
+        // Enforce max copy events limit
+        if (this.recentCopyEvents.length > MAX_COPY_EVENTS) {
+          this.recentCopyEvents.shift(); // Remove oldest
+        }
+
+        if (isSensitive) {
+          log.info(
+            "[PatternManager] Copy event tracked (sensitive content hashed):",
+            {
+              sourceElement,
+              url,
+              timestamp,
+            },
+          );
+        } else {
+          log.info("[PatternManager] Copy event tracked:", {
+            text: text.substring(0, 50) + (text.length > 50 ? "..." : ""),
+            sourceElement,
+            url,
+            timestamp,
+          });
+        }
+
+        return { success: true };
+      }
+
+      // Handle paste event
+      if (data.pasteEvent) {
+        const { destinationElement, url, pageTitle, timestamp } =
+          data.pasteEvent;
+
+        // Find most recent copy event (within 5 minute window)
+        const now = timestamp;
+        const recentCopy = this.recentCopyEvents
+          .filter((event) => now - event.timestamp < COPY_PASTE_MAX_GAP_MS)
+          .sort((a, b) => b.timestamp - a.timestamp)[0]; // Most recent first
+
+        if (!recentCopy) {
+          log.warn(
+            "[PatternManager] Paste event without recent copy - no pair created",
+          );
+          return { success: true }; // Don't fail, just don't create pair
+        }
+
+        // Calculate time gap
+        const timeGap = timestamp - recentCopy.timestamp;
+
+        // Create copy-paste pair
+        const pair: CopyPastePair = {
+          copiedText: recentCopy.isSensitive ? undefined : recentCopy.text, // Only include if not sensitive
+          copiedTextHash: recentCopy.textHash,
+          sourceUrl: recentCopy.url,
+          sourceElement: recentCopy.sourceElement,
+          sourcePageTitle: recentCopy.pageTitle,
+          destinationUrl: url,
+          destinationElement,
+          destinationPageTitle: pageTitle,
+          timestamp,
+          timeGap,
+        };
+
+        log.info("[PatternManager] Copy-paste pair created:", {
+          sourceUrl: pair.sourceUrl,
+          destinationUrl: pair.destinationUrl,
+          timeGap: `${(timeGap / 1000).toFixed(1)}s`,
+        });
+
+        // Generate pattern hash for matching (source URL + destination URL + element selectors)
+        const patternHash = `${recentCopy.url}::${url}::${recentCopy.sourceElement}::${destinationElement}`;
+
+        // Find existing pattern with same source/destination combination
+        const existingPatternStmt = this.db.prepare(`
+          SELECT id, pattern_data, occurrence_count, confidence
+          FROM patterns
+          WHERE type = 'copy-paste'
+          ORDER BY last_seen DESC
+        `);
+
+        const existingPatterns = existingPatternStmt.all() as Array<{
+          id: string;
+          pattern_data: string;
+          occurrence_count: number;
+          confidence: number;
+        }>;
+
+        // Find matching pattern by comparing pattern hash
+        let matchingPattern: (typeof existingPatterns)[0] | undefined;
+        for (const pattern of existingPatterns) {
+          const patternData: CopyPastePattern = JSON.parse(
+            pattern.pattern_data,
+          );
+          const firstPair = patternData.pairs[0];
+          if (!firstPair) continue;
+
+          const existingHash = `${firstPair.sourceUrl}::${firstPair.destinationUrl}::${firstPair.sourceElement}::${firstPair.destinationElement}`;
+
+          if (existingHash === patternHash) {
+            matchingPattern = pattern;
+            break;
+          }
+        }
+
+        if (matchingPattern) {
+          // Increment occurrence count for existing pattern
+          const newOccurrenceCount = matchingPattern.occurrence_count + 1;
+          const newConfidence = Math.min(newOccurrenceCount * 20, 100); // Max 100%
+
+          const updateStmt = this.db.prepare(`
+            UPDATE patterns
+            SET occurrence_count = ?,
+                confidence = ?,
+                last_seen = ?
+            WHERE id = ?
+          `);
+
+          updateStmt.run(
+            newOccurrenceCount,
+            newConfidence,
+            timestamp,
+            matchingPattern.id,
+          );
+
+          log.info(
+            "[PatternManager] Copy-paste pattern occurrence incremented:",
+            {
+              patternId: matchingPattern.id,
+              occurrenceCount: newOccurrenceCount,
+              confidence: newConfidence,
+            },
+          );
+
+          // Generate intent summaries if confidence >70% (Story 1.12)
+          if (newConfidence > 70 && this.intentSummarizer) {
+            try {
+              const summaries = await this.intentSummarizer.summarizePattern(
+                matchingPattern.id,
+              );
+              log.info(
+                `[PatternManager] Intent summaries for ${matchingPattern.id}:\n  Short: "${summaries.short}"\n  Detailed: "${summaries.detailed}"`,
+              );
+            } catch (summaryError) {
+              log.error(
+                "[PatternManager] Failed to generate intent summaries:",
+                summaryError,
+              );
+            }
+          }
+
+          // Trigger notification if threshold reached
+          if (newOccurrenceCount === DETECTION_THRESHOLD) {
+            log.info(
+              "[PatternManager] Copy-paste pattern threshold reached - notification triggered",
+              {
+                patternId: matchingPattern.id,
+                sourceUrl: pair.sourceUrl,
+                destinationUrl: pair.destinationUrl,
+              },
+            );
+            // TODO: Trigger notification system (Story 1.9)
+          }
+        } else {
+          // Create new copy-paste pattern
+          const patternId = `copy-paste-${patternHash}-${Date.now()}`;
+          const copyPastePattern: CopyPastePattern = {
+            pairs: [pair],
+          };
+
+          const insertStmt = this.db.prepare(`
+            INSERT INTO patterns (
+              id, type, pattern_data, confidence, occurrence_count,
+              first_seen, last_seen, created_at
+            ) VALUES (?, 'copy-paste', ?, 0, 1, ?, ?, ?)
+          `);
+
+          insertStmt.run(
+            patternId,
+            JSON.stringify(copyPastePattern),
+            timestamp,
+            timestamp,
+            timestamp,
+          );
+
+          log.info("[PatternManager] New copy-paste pattern created:", {
+            patternId,
+            sourceUrl: pair.sourceUrl,
+            destinationUrl: pair.destinationUrl,
+          });
+        }
+
+        // Run cleanup if needed
+        await this.cleanupOldPatterns();
+
+        return { success: true };
+      }
+
+      // If neither copy nor paste event provided
+      log.warn(
+        "[PatternManager] trackCopyPaste called without copy or paste event",
+      );
+      return {
+        success: false,
+        error: {
+          code: "INVALID_INPUT",
+          message: "Either copyEvent or pasteEvent required",
+        },
+      };
+    } catch (error) {
+      log.error("[PatternManager] Track copy-paste error:", error);
+      return {
+        success: false,
+        error: {
+          code: "TRACK_COPY_PASTE_ERROR",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      };
+    }
+  }
+
+  /**
+   * Check if content is sensitive (Story 1.7b - AC 1)
+   * Detects password fields, credit card patterns, SSN patterns
+   */
+  private isSensitiveContent(element: string, text: string): boolean {
+    // Password field detection (input[type="password"])
+    if (element.includes('type="password"') || element.includes("password")) {
+      return true;
+    }
+
+    // Credit card pattern detection
+    const ccPattern = /\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}/;
+    if (ccPattern.test(text)) {
+      return true;
+    }
+
+    // SSN pattern detection
+    const ssnPattern = /\d{3}-\d{2}-\d{4}/;
+    if (ssnPattern.test(text)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Clean up resources
    */
   public async cleanup(): Promise<void> {
     try {
       log.info("[PatternManager] Cleaning up...");
+
+      // Stop copy event cleanup interval (Story 1.7b)
+      if (this.copyEventCleanupInterval) {
+        clearInterval(this.copyEventCleanupInterval);
+        this.copyEventCleanupInterval = null;
+      }
+
       this.db = null;
       log.info("[PatternManager] Cleanup completed");
     } catch (error) {

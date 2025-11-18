@@ -73,12 +73,24 @@ export class Tab {
       // Track navigation pattern (skip if in automation mode)
       if (!this._isAutomationMode) {
         try {
+          // Enhanced context capture: Get page title (Story 1.12 - AC 1)
+          let pageTitle: string | undefined;
+          try {
+            pageTitle =
+              await this.webContentsView.webContents.executeJavaScript(
+                "document.title",
+              );
+          } catch (titleError) {
+            log.warn("[Tab] Failed to capture page title:", titleError);
+          }
+
           const patternManager = PatternManager.getInstance();
           await patternManager.trackNavigation({
             url,
             tabId: this._id,
             timestamp,
             eventType: "did-navigate",
+            pageTitle, // Enhanced context (Story 1.12)
           });
         } catch (error) {
           log.error("[Tab] Navigation tracking error:", error);
@@ -145,6 +157,7 @@ export class Tab {
     // Inject form tracking script and automation overlay on page load
     this.webContentsView.webContents.on("did-finish-load", async () => {
       await this.injectFormTrackingScript();
+      await this.injectCopyPasteTrackingScript(); // Story 1.7b
 
       // Re-inject automation overlay if in automation mode
       // (navigations clear the overlay, so we need to re-inject)
@@ -254,6 +267,84 @@ export class Tab {
             log.error("[Tab] Form submission tracking error:", error);
           }
         }
+
+        // Story 1.7b: Handle copy events
+        if (message.startsWith("__BLUEBERRY_COPY__")) {
+          try {
+            const jsonData = message.substring("__BLUEBERRY_COPY__".length + 1);
+            const copyData = JSON.parse(jsonData);
+
+            // SECURITY: Validate tabId matches current tab
+            if (copyData.tabId !== this._id) {
+              log.warn("[Tab] Copy event tabId mismatch", {
+                expected: this._id,
+                received: copyData.tabId,
+              });
+              return;
+            }
+
+            // SECURITY: Validate timestamp freshness
+            const messageAge = Date.now() - copyData.timestamp;
+            if (messageAge > 5000 || messageAge < 0) {
+              log.warn("[Tab] Copy event timestamp invalid", {
+                ageMs: messageAge,
+              });
+              return;
+            }
+
+            // Skip if in automation mode (don't track patterns during automation)
+            if (this._isAutomationMode) {
+              return;
+            }
+
+            const patternManager = PatternManager.getInstance();
+            await patternManager.trackCopyPaste({ copyEvent: copyData });
+
+            log.info("[Tab] Copy event tracked successfully");
+          } catch (error) {
+            log.error("[Tab] Copy event tracking error:", error);
+          }
+        }
+
+        // Story 1.7b: Handle paste events
+        if (message.startsWith("__BLUEBERRY_PASTE__")) {
+          try {
+            const jsonData = message.substring(
+              "__BLUEBERRY_PASTE__".length + 1,
+            );
+            const pasteData = JSON.parse(jsonData);
+
+            // SECURITY: Validate tabId matches current tab
+            if (pasteData.tabId !== this._id) {
+              log.warn("[Tab] Paste event tabId mismatch", {
+                expected: this._id,
+                received: pasteData.tabId,
+              });
+              return;
+            }
+
+            // SECURITY: Validate timestamp freshness
+            const messageAge = Date.now() - pasteData.timestamp;
+            if (messageAge > 5000 || messageAge < 0) {
+              log.warn("[Tab] Paste event timestamp invalid", {
+                ageMs: messageAge,
+              });
+              return;
+            }
+
+            // Skip if in automation mode (don't track patterns during automation)
+            if (this._isAutomationMode) {
+              return;
+            }
+
+            const patternManager = PatternManager.getInstance();
+            await patternManager.trackCopyPaste({ pasteEvent: pasteData });
+
+            log.info("[Tab] Paste event tracked successfully");
+          } catch (error) {
+            log.error("[Tab] Paste event tracking error:", error);
+          }
+        }
       },
     );
 
@@ -341,6 +432,25 @@ export class Tab {
             return 'text_format';
           }
 
+          // Sanitize field value for AI context (Story 1.12 - Code Review fix)
+          // Returns actual value for non-sensitive fields (truncated to 100 chars)
+          function sanitizeValue(value, fieldName, fieldType) {
+            // Never sanitize sensitive fields - return null
+            if (isSensitiveField(fieldName, fieldType)) {
+              return null;
+            }
+
+            if (!value) return null;
+
+            // Truncate long values to prevent bloating context
+            const maxLength = 100;
+            const sanitized = value.length > maxLength
+              ? value.substring(0, maxLength) + '...'
+              : value;
+
+            return sanitized;
+          }
+
           // Extract form fields (excluding sensitive fields)
           function extractFormFields(form) {
             const fields = [];
@@ -367,12 +477,53 @@ export class Tab {
                 return;
               }
 
-              // Add field with anonymized value pattern
-              fields.push({
+              // Enhanced context capture: Extract field label (Story 1.12 - AC 1)
+              let fieldLabel = '';
+              try {
+                // For buttons/submit: Capture button text or value
+                if (fieldType === 'submit' || fieldType === 'button') {
+                  fieldLabel = input.textContent?.trim() ||
+                              input.getAttribute('value') ||
+                              input.getAttribute('aria-label') ||
+                              fieldName;
+                } else {
+                  // For other inputs: Try to find associated label element
+                  const labelElement = form.querySelector(\`label[for="\${input.id}"]\`);
+                  if (labelElement) {
+                    fieldLabel = labelElement.textContent?.trim() || '';
+                  } else {
+                    // Try parent label
+                    const parentLabel = input.closest('label');
+                    if (parentLabel) {
+                      fieldLabel = parentLabel.textContent?.trim() || '';
+                    } else {
+                      // Fallback to aria-label or placeholder
+                      fieldLabel = input.getAttribute('aria-label') ||
+                                  input.getAttribute('placeholder') ||
+                                  fieldName;
+                    }
+                  }
+                }
+              } catch (labelError) {
+                // Fallback to field name if label extraction fails
+                fieldLabel = fieldName;
+              }
+
+              // Add field with anonymized value pattern, label, and sanitized value
+              const sanitized = sanitizeValue(fieldValue, fieldName, fieldType);
+              const fieldData = {
                 name: fieldName,
                 type: fieldType,
-                valuePattern: anonymizeValue(fieldValue)
-              });
+                valuePattern: anonymizeValue(fieldValue),
+                label: fieldLabel // Enhanced context (Story 1.12)
+              };
+
+              // Only add sanitizedValue if not sensitive (Story 1.12 - Code Review fix)
+              if (sanitized !== null) {
+                fieldData.sanitizedValue = sanitized;
+              }
+
+              fields.push(fieldData);
 
               // Mark field name as seen
               seenFieldNames.add(fieldName);
@@ -431,6 +582,85 @@ export class Tab {
       log.info("[Tab] Form tracking script injected successfully");
     } catch (error) {
       log.error("[Tab] Form tracking script injection error:", error);
+    }
+  }
+
+  /**
+   * Inject copy/paste tracking script into page context (Story 1.7b)
+   * Captures copy and paste events and sends data to main process for pattern tracking
+   */
+  private async injectCopyPasteTrackingScript(): Promise<void> {
+    try {
+      await this.webContentsView.webContents.executeJavaScript(`
+        (function() {
+          // Prevent double injection
+          if (window.__blueberryCopyPasteTrackerInjected) return;
+          window.__blueberryCopyPasteTrackerInjected = true;
+
+          // Helper: Get CSS selector for element
+          function getElementSelector(element) {
+            if (!element) return 'unknown';
+            if (element.id) return '#' + element.id;
+            if (element.name) return element.tagName.toLowerCase() + '[name="' + element.name + '"]';
+            if (element.className) {
+              const classes = element.className.split(' ').filter(c => c.trim()).slice(0, 2);
+              if (classes.length > 0) {
+                return element.tagName.toLowerCase() + '.' + classes.join('.');
+              }
+            }
+            return element.tagName.toLowerCase();
+          }
+
+          // Listen for copy events
+          document.addEventListener('copy', (event) => {
+            try {
+              const selection = window.getSelection();
+              const text = selection ? selection.toString() : '';
+
+              if (!text) return; // Skip empty copies
+
+              const element = event.target;
+              const copyData = {
+                text: text,
+                sourceElement: getElementSelector(element),
+                url: window.location.href,
+                pageTitle: document.title,
+                timestamp: Date.now(),
+                tabId: '${this._id}'
+              };
+
+              // Forward to main process via console API
+              console.log('__BLUEBERRY_COPY__', JSON.stringify(copyData));
+            } catch (error) {
+              console.error('[Blueberry] Copy tracking error:', error);
+            }
+          }, true); // Use capture phase
+
+          // Listen for paste events
+          document.addEventListener('paste', (event) => {
+            try {
+              const element = event.target;
+              const pasteData = {
+                destinationElement: getElementSelector(element),
+                url: window.location.href,
+                pageTitle: document.title,
+                timestamp: Date.now(),
+                tabId: '${this._id}'
+              };
+
+              // Forward to main process via console API
+              console.log('__BLUEBERRY_PASTE__', JSON.stringify(pasteData));
+            } catch (error) {
+              console.error('[Blueberry] Paste tracking error:', error);
+            }
+          }, true); // Use capture phase
+
+        })();
+      `);
+
+      log.info("[Tab] Copy/paste tracking script injected successfully");
+    } catch (error) {
+      log.error("[Tab] Copy/paste tracking script injection error:", error);
     }
   }
 

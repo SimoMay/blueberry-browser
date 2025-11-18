@@ -23,6 +23,8 @@ interface FormPattern {
   fields: Array<{
     name: string;
     valuePattern: string; // 'email', 'name', 'phone', 'number', 'text'
+    label?: string; // Enhanced context for AI (Story 1.12)
+    sanitizedValue?: string; // Actual value for non-sensitive fields (Story 1.12)
   }>;
 }
 
@@ -198,7 +200,7 @@ export class AutomationExecutor {
     pattern: FormPattern,
     onProgress?: ProgressCallback,
   ): Promise<{ success: boolean; stepsExecuted: number }> {
-    const totalSteps = pattern.fields.length + 1; // +1 for navigation step
+    const totalSteps = pattern.fields.length + 2; // +1 for navigation, +1 for submit
     let stepNum = 1;
 
     log.info(
@@ -236,7 +238,10 @@ export class AutomationExecutor {
         onProgress(stepNum, totalSteps, `Filling field "${field.name}"...`);
       }
 
-      const generatedValue = this.generateValueForPattern(field.valuePattern);
+      // Use sanitized value if available (Story 1.12), otherwise generate sample value
+      const generatedValue =
+        field.sanitizedValue ||
+        this.generateValueForPattern(field.valuePattern);
 
       // Construct JavaScript to fill form field
       const script = `
@@ -271,6 +276,45 @@ export class AutomationExecutor {
           );
         }
       }
+    }
+
+    // Step N+1: Submit the form
+    stepNum++;
+    if (onProgress) {
+      onProgress(stepNum, totalSteps, "Submitting form...");
+    }
+
+    try {
+      // Try to submit the form - look for submit button or use form.submit()
+      const submitScript = `
+        (function() {
+          const form = document.querySelector('${pattern.formSelector}');
+          if (!form) {
+            throw new Error('Form not found for submission');
+          }
+
+          // Try to find and click submit button first (preferred method)
+          const submitButton = form.querySelector('input[type="submit"], button[type="submit"], button:not([type])');
+          if (submitButton) {
+            submitButton.click();
+            return 'clicked submit button';
+          }
+
+          // Fallback: call form.submit()
+          form.submit();
+          return 'called form.submit()';
+        })();
+      `;
+
+      const submitResult = await tab.runJs(submitScript);
+      log.info(`[AutomationExecutor] Form submitted: ${submitResult}`);
+
+      // Wait for navigation after submission
+      await this.delay(2000);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      throw new Error(`Failed to submit form: ${errorMessage}`);
     }
 
     return { success: true, stepsExecuted: totalSteps };

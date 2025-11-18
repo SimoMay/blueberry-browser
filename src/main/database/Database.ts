@@ -561,6 +561,75 @@ export class DatabaseManager {
           CREATE INDEX idx_automations_pattern ON automations(pattern_id);
         `,
       },
+      {
+        version: 6,
+        up: `
+          -- Story 1.12: AI Pattern Intent Summarization
+          -- Add intent_summary and summary_generated_at columns to patterns table
+          ALTER TABLE patterns ADD COLUMN intent_summary TEXT;
+          ALTER TABLE patterns ADD COLUMN summary_generated_at INTEGER;
+        `,
+        down: `
+          -- Revert to v5 schema (remove AI columns)
+          -- Note: SQLite doesn't support DROP COLUMN, so we need to recreate the table
+          CREATE TABLE patterns_old (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('navigation', 'form', 'copy-paste')),
+            pattern_data TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            occurrence_count INTEGER DEFAULT 1,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            dismissed BOOLEAN DEFAULT 0,
+            created_at INTEGER NOT NULL
+          );
+
+          INSERT INTO patterns_old SELECT id, type, pattern_data, confidence, occurrence_count, first_seen, last_seen, dismissed, created_at FROM patterns;
+
+          DROP TABLE patterns;
+          ALTER TABLE patterns_old RENAME TO patterns;
+
+          CREATE INDEX idx_patterns_type ON patterns(type);
+          CREATE INDEX idx_patterns_confidence ON patterns(confidence);
+          CREATE INDEX idx_patterns_dismissed ON patterns(dismissed);
+          CREATE INDEX idx_patterns_created_at ON patterns(created_at);
+        `,
+      },
+      {
+        version: 7,
+        up: `
+          -- Story 1.12 Enhancement: Dual-level summaries
+          -- Add detailed summary for chat interface (short summary already exists)
+          ALTER TABLE patterns ADD COLUMN intent_summary_detailed TEXT;
+        `,
+        down: `
+          -- Revert to v6 schema (remove detailed summary)
+          -- Note: SQLite doesn't support DROP COLUMN directly
+          CREATE TABLE patterns_temp (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('navigation', 'form', 'copy-paste')),
+            pattern_data TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            occurrence_count INTEGER DEFAULT 1,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            dismissed BOOLEAN DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            intent_summary TEXT,
+            summary_generated_at INTEGER
+          );
+
+          INSERT INTO patterns_temp SELECT id, type, pattern_data, confidence, occurrence_count, first_seen, last_seen, dismissed, created_at, intent_summary, summary_generated_at FROM patterns;
+
+          DROP TABLE patterns;
+          ALTER TABLE patterns_temp RENAME TO patterns;
+
+          CREATE INDEX idx_patterns_type ON patterns(type);
+          CREATE INDEX idx_patterns_confidence ON patterns(confidence);
+          CREATE INDEX idx_patterns_dismissed ON patterns(dismissed);
+          CREATE INDEX idx_patterns_created_at ON patterns(created_at);
+        `,
+      },
     ];
   }
 

@@ -13,6 +13,8 @@ import {
   ExecuteAutomationSchema,
   EditAutomationSchema,
   DeleteAutomationSchema,
+  CopyEventSchema,
+  PasteEventSchema,
 } from "./schemas/patternSchemas";
 import {
   StartRecordingSchema,
@@ -735,6 +737,62 @@ export class EventManager {
         // Call PatternManager (validation happens inside trackFormSubmission)
         return await patternManager.trackFormSubmission(data);
       } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Track copy/paste events (Story 1.7b)
+    ipcMain.handle("pattern:track-copy-paste", async (_, data) => {
+      try {
+        // Rate limiting (Story 1.7b - AC 1: Max 20 copy/paste events per second)
+        if (!this.checkRateLimit("pattern:track-copy-paste", 20)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many copy/paste requests",
+            },
+          };
+        }
+
+        // Zod validation
+        let validated: {
+          copyEvent?: z.infer<typeof CopyEventSchema>;
+          pasteEvent?: z.infer<typeof PasteEventSchema>;
+        };
+
+        if (data.copyEvent) {
+          validated = { copyEvent: CopyEventSchema.parse(data.copyEvent) };
+        } else if (data.pasteEvent) {
+          validated = { pasteEvent: PasteEventSchema.parse(data.pasteEvent) };
+        } else {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Either copyEvent or pasteEvent is required",
+            },
+          };
+        }
+
+        // Call PatternManager
+        return await patternManager.trackCopyPaste(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
         return {
           success: false,
           error: {

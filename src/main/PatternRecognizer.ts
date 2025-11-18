@@ -3,6 +3,7 @@ import log from "electron-log";
 import { PatternType, NavigationPattern, FormPattern } from "./PatternManager";
 import { NotificationManager } from "./NotificationManager";
 import { EventManager } from "./EventManager";
+import { IntentSummarizer } from "./IntentSummarizer"; // Story 1.12
 
 /**
  * Recognized pattern with confidence score and notification readiness
@@ -48,6 +49,7 @@ export class PatternRecognizer {
   private db: Database.Database | null = null;
   private notificationManager: NotificationManager | null = null;
   private eventManager: EventManager | null = null;
+  private intentSummarizer: IntentSummarizer | null = null; // Story 1.12
   private jobInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
@@ -62,6 +64,7 @@ export class PatternRecognizer {
    */
   private constructor(db: Database.Database) {
     this.db = db;
+    this.intentSummarizer = IntentSummarizer.getInstance(db); // Story 1.12
     log.info("[PatternRecognizer] Instance created");
   }
 
@@ -145,6 +148,9 @@ export class PatternRecognizer {
 
       // 5. Update database with confidence scores
       this.updatePatternConfidence(allRecognized);
+
+      // 5.5. Generate intent summaries for patterns with confidence >70% (Story 1.12 - AC 1)
+      await this.generateIntentSummaries(allRecognized);
 
       // 6. Trigger notifications for patterns meeting threshold
       await this.triggerNotifications(allRecognized);
@@ -535,6 +541,55 @@ export class PatternRecognizer {
     } catch (error) {
       log.error("[PatternRecognizer] Error fetching pattern by ID:", error);
       return null;
+    }
+  }
+
+  /**
+   * Generate intent summaries for patterns with confidence >70%
+   * Story 1.12 - AC 1: Single LLM call per pattern, cached for 1 hour
+   *
+   * @param patterns Recognized patterns to generate summaries for
+   */
+  private async generateIntentSummaries(
+    patterns: RecognizedPattern[],
+  ): Promise<void> {
+    if (!this.intentSummarizer) {
+      log.warn(
+        "[PatternRecognizer] IntentSummarizer not initialized, skipping summary generation",
+      );
+      return;
+    }
+
+    // Filter patterns with confidence >70%
+    const highConfidencePatterns = patterns.filter((p) => p.confidence > 70);
+
+    if (highConfidencePatterns.length === 0) {
+      log.info(
+        "[PatternRecognizer] No patterns with confidence >70% for summarization",
+      );
+      return;
+    }
+
+    log.info(
+      `[PatternRecognizer] Generating intent summaries for ${highConfidencePatterns.length} high-confidence patterns`,
+    );
+
+    // Generate summaries (with error handling per pattern)
+    for (const pattern of highConfidencePatterns) {
+      try {
+        const summaries = await this.intentSummarizer.summarizePattern(
+          pattern.id,
+        );
+        log.info(
+          `[PatternRecognizer] Intent summaries for ${pattern.id}:\n  Short: "${summaries.short}"\n  Detailed: "${summaries.detailed}"`,
+        );
+      } catch (error) {
+        log.error(
+          `[PatternRecognizer] Failed to generate summaries for ${pattern.id}:`,
+          error,
+        );
+        // Continue with other patterns - summary failure shouldn't block recognition
+      }
     }
   }
 

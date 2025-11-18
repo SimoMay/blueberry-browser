@@ -68,6 +68,26 @@ export const DeleteAutomationSchema = z.object({
 });
 
 /**
+ * Copy/Paste event schemas (Story 1.7b)
+ */
+export const CopyEventSchema = z.object({
+  text: z.string(),
+  sourceElement: z.string(),
+  url: z.string().url({ message: "Invalid source URL" }),
+  pageTitle: z.string(),
+  timestamp: z.number().int().positive(),
+  tabId: z.string(),
+});
+
+export const PasteEventSchema = z.object({
+  destinationElement: z.string(),
+  url: z.string().url({ message: "Invalid destination URL" }),
+  pageTitle: z.string(),
+  timestamp: z.number().int().positive(),
+  tabId: z.string(),
+});
+
+/**
  * Type exports for TypeScript
  */
 export type PatternTrackInput = z.infer<typeof PatternTrackSchema>;
@@ -76,3 +96,5 @@ export type SaveAutomationInput = z.infer<typeof SaveAutomationSchema>;
 export type ExecuteAutomationInput = z.infer<typeof ExecuteAutomationSchema>;
 export type EditAutomationInput = z.infer<typeof EditAutomationSchema>;
 export type DeleteAutomationInput = z.infer<typeof DeleteAutomationSchema>;
+export type CopyEventInput = z.infer<typeof CopyEventSchema>;
+export type PasteEventInput = z.infer<typeof PasteEventSchema>;
