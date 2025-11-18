@@ -59,6 +59,8 @@ const sidebarAPI = {
 
   // Tab information
   getActiveTabInfo: () => electronAPI.ipcRenderer.invoke("get-active-tab-info"),
+  switchTab: (tabId: string) =>
+    electronAPI.ipcRenderer.invoke("switch-tab", tabId),
 
   // Notification functionality
   notifications: {
@@ -254,6 +256,73 @@ const sidebarAPI = {
 
     removeAlertListener: () => {
       electronAPI.ipcRenderer.removeAllListeners("monitor:alert");
+    },
+  },
+
+  // Recording functionality (Story 1.11)
+  recording: {
+    start: (tabId: string) =>
+      electronAPI.ipcRenderer.invoke("pattern:start-recording", { tabId }),
+
+    stop: () => electronAPI.ipcRenderer.invoke("pattern:stop-recording"),
+
+    // AC #9: Get action count before stopping
+    getActionCount: () =>
+      electronAPI.ipcRenderer.invoke("pattern:get-action-count"),
+
+    save: (data: { name: string; description?: string; actions: unknown[] }) =>
+      electronAPI.ipcRenderer.invoke("pattern:save-recording", data),
+
+    onActionCaptured: (
+      callback: (data: {
+        tabId: string;
+        actionCount: number;
+        actionType: string;
+      }) => void,
+    ) => {
+      electronAPI.ipcRenderer.on("recording:action-captured", (_, data) =>
+        callback(data),
+      );
+    },
+
+    removeActionCapturedListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("recording:action-captured");
+    },
+
+    onStatusChanged: (
+      callback: (data: {
+        status: string;
+        tabId?: string;
+        message?: string;
+      }) => void,
+    ) => {
+      electronAPI.ipcRenderer.on("recording:status-changed", (_, data) =>
+        callback(data),
+      );
+    },
+
+    removeStatusChangedListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("recording:status-changed");
+    },
+
+    // Convenience method for generic event listening
+    on: (
+      event: "action-captured" | "status-changed",
+      callback: (data: unknown) => void,
+    ) => {
+      const eventName =
+        event === "action-captured"
+          ? "recording:action-captured"
+          : "recording:status-changed";
+      electronAPI.ipcRenderer.on(eventName, (_, data) => callback(data));
+    },
+
+    removeListener: (event: "action-captured" | "status-changed") => {
+      const eventName =
+        event === "action-captured"
+          ? "recording:action-captured"
+          : "recording:status-changed";
+      electronAPI.ipcRenderer.removeAllListeners(eventName);
     },
   },
 };

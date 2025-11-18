@@ -4,6 +4,7 @@ import { Tab } from "./Tab";
 import { TopBar } from "./TopBar";
 import { SideBar } from "./SideBar";
 import { PatternRecognizer } from "./PatternRecognizer";
+import { RecordingManager } from "./RecordingManager";
 
 export class Window {
   private _baseWindow: BaseWindow;
@@ -12,6 +13,7 @@ export class Window {
   private tabCounter: number = 0;
   private _topBar: TopBar;
   private _sideBar: SideBar;
+  private _recordingManager: RecordingManager;
 
   constructor() {
     // Create the browser window.
@@ -29,6 +31,10 @@ export class Window {
 
     this._topBar = new TopBar(this._baseWindow);
     this._sideBar = new SideBar(this._baseWindow);
+    this._recordingManager = new RecordingManager(this);
+
+    // AC #10: Clear any stale recording state from previous sessions
+    this._recordingManager.clearStaleRecordings();
 
     // Set the window reference on the LLM client to avoid circular dependency
     this._sideBar.client.setWindow(this);
@@ -94,6 +100,9 @@ export class Window {
   createTab(url?: string): Tab {
     const tabId = `tab-${++this.tabCounter}`;
     const tab = new Tab(tabId, url);
+
+    // Set window reference for recording support (Story 1.11)
+    tab.setWindow(this);
 
     // Add the tab's WebContentsView to the window
     this._baseWindow.contentView.addChildView(tab.view);
@@ -170,17 +179,32 @@ export class Window {
       return false;
     }
 
+    // Handle recording pause/resume (Story 1.11 - AC 6)
+
     // Hide the currently active tab
     if (this.activeTabId && this.activeTabId !== tabId) {
       const currentTab = this.tabsMap.get(this.activeTabId);
       if (currentTab) {
         currentTab.hide();
+
+        // Pause recording on old tab if active
+        if (this._recordingManager.isRecording(this.activeTabId)) {
+          this._recordingManager.pauseRecording(this.activeTabId);
+        }
       }
     }
 
     // Show the new active tab
     tab.show();
     this.activeTabId = tabId;
+
+    // Resume recording on new tab if paused
+    if (this._recordingManager.isRecording(tabId)) {
+      const session = this._recordingManager.getRecordingSession(tabId);
+      if (session && session.status === "paused") {
+        this._recordingManager.resumeRecording(tabId);
+      }
+    }
 
     // Update the window title to match the tab title
     this._baseWindow.setTitle(tab.title || "Blueberry Browser");
@@ -282,5 +306,20 @@ export class Window {
   // Getter for baseWindow to access from Menu
   get baseWindow(): BaseWindow {
     return this._baseWindow;
+  }
+
+  // Getter for recordingManager
+  get recordingManager(): RecordingManager {
+    return this._recordingManager;
+  }
+
+  // Helper method to send events to sidebar
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sendToSidebar(channel: string, data: any): void {
+    try {
+      this._sideBar.view.webContents.send(channel, data);
+    } catch (error) {
+      log.error(`[Window] Failed to send to sidebar (${channel}):`, error);
+    }
   }
 }

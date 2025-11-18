@@ -6,6 +6,7 @@ import {
   AutomationProvider,
   useAutomation,
 } from "./contexts/AutomationContext";
+import { RecordingProvider } from "./contexts/RecordingContext";
 import { Chat } from "./components/Chat";
 import { NotificationPanel } from "./components/NotificationPanel";
 import { AutomationLibrary } from "./components/AutomationLibrary";
@@ -206,9 +207,11 @@ export const SidebarApp: React.FC = () => {
     <NotificationProvider>
       <PatternProvider>
         <AutomationProvider>
-          <ChatProvider>
-            <SidebarContent />
-          </ChatProvider>
+          <RecordingProvider>
+            <ChatProvider>
+              <SidebarContent />
+            </ChatProvider>
+          </RecordingProvider>
         </AutomationProvider>
       </PatternProvider>
     </NotificationProvider>

@@ -118,6 +118,7 @@ interface SidebarAPI {
 
   // Tab information
   getActiveTabInfo: () => Promise<TabInfo | null>;
+  switchTab: (tabId: string) => Promise<void>;
 
   // Notification functionality
   notifications: {
@@ -222,6 +223,46 @@ interface SidebarAPI {
       }) => void,
     ) => void;
     removeAlertListener: () => void;
+  };
+
+  // Recording functionality (Story 1.11)
+  recording: {
+    start: (tabId: string) => Promise<PatternAPIResponse>;
+    stop: () => Promise<
+      PatternAPIResponse<{
+        actions: unknown[];
+        tabId: string;
+        duration: number;
+      }>
+    >;
+    // AC #9: Get action count before stopping
+    getActionCount: () => Promise<{ success: boolean; count: number }>;
+    save: (data: {
+      name: string;
+      description?: string;
+      actions: unknown[];
+    }) => Promise<PatternAPIResponse<{ automationId: string }>>;
+    onActionCaptured: (
+      callback: (data: {
+        tabId: string;
+        actionCount: number;
+        actionType: string;
+      }) => void,
+    ) => void;
+    removeActionCapturedListener: () => void;
+    onStatusChanged: (
+      callback: (data: {
+        status: string;
+        tabId?: string;
+        message?: string;
+      }) => void,
+    ) => void;
+    removeStatusChangedListener: () => void;
+    on: (
+      event: "action-captured" | "status-changed",
+      callback: (data: unknown) => void,
+    ) => void;
+    removeListener: (event: "action-captured" | "status-changed") => void;
   };
 }
 
