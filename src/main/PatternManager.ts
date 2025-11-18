@@ -7,6 +7,7 @@ import {
   PatternGetAllInput,
   SaveAutomationInput,
 } from "./schemas/patternSchemas";
+import { SaveRecordingInput } from "./schemas/recordingSchemas";
 
 /**
  * Pattern type
@@ -937,6 +938,124 @@ export class PatternManager {
       }
     } catch (error) {
       log.error("[PatternManager] Cleanup error:", error);
+    }
+  }
+
+  /**
+   * Save a manually recorded automation (Story 1.11)
+   *
+   * Converts recorded actions to pattern_data and saves to automations table
+   */
+  public async saveManualRecording(
+    data: SaveRecordingInput,
+  ): Promise<IPCResponse<{ automationId: string }>> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      log.info("[PatternManager] Save manual recording:", data.name);
+
+      // Determine pattern type from actions
+      const hasNavigation = data.actions.some((a) => a.type === "navigation");
+      const hasForms = data.actions.some((a) => a.type === "form");
+
+      let patternType: PatternType;
+      let patternData: NavigationPattern | FormPattern;
+
+      if (hasForms) {
+        // Form pattern (Story 1.7)
+        patternType = "form";
+        const formAction = data.actions.find((a) => a.type === "form");
+        if (formAction) {
+          patternData = {
+            domain: formAction.data.domain,
+            formSelector: formAction.data.formSelector,
+            fields: formAction.data.fields,
+          };
+        } else {
+          // Fallback if no form action found (shouldn't happen)
+          throw new Error("No form action found in recording");
+        }
+      } else if (hasNavigation) {
+        // Navigation pattern (Story 1.6)
+        patternType = "navigation";
+        const navActions = data.actions.filter((a) => a.type === "navigation");
+        patternData = {
+          sequence: navActions.map((a) => ({
+            url: a.data.url,
+            timestamp: a.timestamp,
+            tabId: a.data.tabId || "manual",
+          })),
+          sessionGap: 1800000, // 30 minutes (standard)
+        };
+      } else {
+        // Default to navigation pattern with empty sequence
+        patternType = "navigation";
+        patternData = {
+          sequence: [],
+          sessionGap: 1800000,
+        };
+      }
+
+      // Create pattern ID and automation ID
+      const patternId = `${patternType}-manual-${uuidv4()}`;
+      const automationId = uuidv4();
+
+      // Create pattern in database (won't trigger notifications since confidence = 100%)
+      const now = Date.now();
+      const patternStmt = this.db.prepare(`
+        INSERT INTO patterns (id, type, pattern_data, confidence, occurrence_count, first_seen, last_seen, created_at, dismissed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      patternStmt.run(
+        patternId,
+        patternType,
+        JSON.stringify(patternData),
+        100, // Manual recordings have 100% confidence
+        1, // Manually recorded = 1 occurrence
+        now, // first_seen
+        now, // last_seen
+        now, // created_at
+        0, // Not dismissed
+      );
+
+      // Create automation directly linked to pattern
+      const automationStmt = this.db.prepare(`
+        INSERT INTO automations (id, pattern_id, name, description, pattern_data, execution_count, last_executed, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      automationStmt.run(
+        automationId,
+        patternId,
+        data.name,
+        data.description || null,
+        JSON.stringify(patternData),
+        0, // No executions yet
+        null, // Not executed yet
+        Date.now(),
+      );
+
+      log.info(
+        "[PatternManager] Manual recording saved successfully:",
+        automationId,
+      );
+
+      return {
+        success: true,
+        data: { automationId },
+      };
+    } catch (error) {
+      log.error("[PatternManager] Failed to save manual recording:", error);
+      return {
+        success: false,
+        error: {
+          code: "SAVE_FAILED",
+          message: error instanceof Error ? error.message : "Unknown error",
+        },
+      };
     }
   }
 

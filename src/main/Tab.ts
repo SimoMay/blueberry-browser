@@ -1,6 +1,8 @@
 import { NativeImage, WebContents, WebContentsView } from "electron";
 import log from "electron-log";
 import { PatternManager } from "./PatternManager";
+import type { Window } from "./Window";
+import { NavigationAction, RecordedAction } from "./RecordingManager";
 
 export class Tab {
   private webContentsView: WebContentsView;
@@ -10,6 +12,8 @@ export class Tab {
   private _isVisible: boolean = false;
   private _isAutomationMode: boolean = false; // Skip pattern tracking during automation
   private formSubmissionTimestamps: number[] = []; // Track timestamps for rate limiting
+  private _window?: Window; // Reference to parent window (set after construction)
+  private _isRecordingMode: boolean = false; // Flag for recording overlay
 
   constructor(id: string, url: string = "https://www.google.com") {
     this._id = id;
@@ -64,9 +68,10 @@ export class Tab {
     this.webContentsView.webContents.on("did-navigate", async (_, url) => {
       this._url = url;
 
+      const timestamp = Date.now();
+
       // Track navigation pattern (skip if in automation mode)
       if (!this._isAutomationMode) {
-        const timestamp = Date.now();
         try {
           const patternManager = PatternManager.getInstance();
           await patternManager.trackNavigation({
@@ -79,6 +84,22 @@ export class Tab {
           log.error("[Tab] Navigation tracking error:", error);
         }
       }
+
+      // Capture for recording if active (Story 1.11 - AC 2)
+      if (this._window) {
+        const recordingManager = this._window.recordingManager;
+        if (recordingManager.isRecording(this._id)) {
+          const action: RecordedAction = {
+            type: "navigation",
+            timestamp,
+            data: {
+              url,
+              tabId: this._id,
+            } as NavigationAction,
+          };
+          recordingManager.captureAction(this._id, action);
+        }
+      }
     });
 
     this.webContentsView.webContents.on(
@@ -86,9 +107,10 @@ export class Tab {
       async (_, url) => {
         this._url = url;
 
+        const timestamp = Date.now();
+
         // Track in-page navigation pattern (skip if in automation mode)
         if (!this._isAutomationMode) {
-          const timestamp = Date.now();
           try {
             const patternManager = PatternManager.getInstance();
             await patternManager.trackNavigation({
@@ -99,6 +121,22 @@ export class Tab {
             });
           } catch (error) {
             log.error("[Tab] In-page navigation tracking error:", error);
+          }
+        }
+
+        // Capture for recording if active (Story 1.11 - AC 2)
+        if (this._window) {
+          const recordingManager = this._window.recordingManager;
+          if (recordingManager.isRecording(this._id)) {
+            const action: RecordedAction = {
+              type: "navigation",
+              timestamp,
+              data: {
+                url,
+                tabId: this._id,
+              } as NavigationAction,
+            };
+            recordingManager.captureAction(this._id, action);
           }
         }
       },
@@ -112,6 +150,12 @@ export class Tab {
       // (navigations clear the overlay, so we need to re-inject)
       if (this._isAutomationMode) {
         await this.injectAutomationOverlay();
+      }
+
+      // Re-inject recording overlay if in recording mode (Story 1.11 - AC 1)
+      // (navigations clear the overlay, so we need to re-inject)
+      if (this._isRecordingMode) {
+        await this.injectRecordingOverlay();
       }
     });
 
@@ -189,12 +233,42 @@ export class Tab {
             await patternManager.trackFormSubmission(formData);
 
             log.info("[Tab] Form submission tracked successfully");
+
+            // Capture for recording if active (Story 1.11 - AC 2)
+            if (this._window) {
+              const recordingManager = this._window.recordingManager;
+              if (recordingManager.isRecording(this._id)) {
+                const action: RecordedAction = {
+                  type: "form",
+                  timestamp: formData.timestamp,
+                  data: {
+                    domain: formData.domain,
+                    formSelector: formData.formSelector,
+                    fields: formData.fields,
+                  },
+                };
+                recordingManager.captureAction(this._id, action);
+              }
+            }
           } catch (error) {
             log.error("[Tab] Form submission tracking error:", error);
           }
         }
       },
     );
+
+    // AC #10: Handle tab crash/destroy - cleanup recording if active
+    this.webContentsView.webContents.on("destroyed", () => {
+      if (this._window) {
+        const recordingManager = this._window.recordingManager;
+        if (recordingManager.isRecording(this._id)) {
+          log.warn(
+            `[Tab] Tab ${this._id} destroyed while recording - auto-stopping`,
+          );
+          recordingManager.handleTabDestroyed(this._id);
+        }
+      }
+    });
   }
 
   /**
@@ -270,6 +344,7 @@ export class Tab {
           // Extract form fields (excluding sensitive fields)
           function extractFormFields(form) {
             const fields = [];
+            const seenFieldNames = new Set(); // Track seen field names to prevent duplicates
             const inputs = form.querySelectorAll('input, textarea, select');
 
             inputs.forEach(input => {
@@ -279,6 +354,11 @@ export class Tab {
 
               // Skip if no name/id or if sensitive
               if (!fieldName || isSensitiveField(fieldName, fieldType)) {
+                return;
+              }
+
+              // Skip if we've already seen this field name (prevents duplicates)
+              if (seenFieldNames.has(fieldName)) {
                 return;
               }
 
@@ -293,6 +373,9 @@ export class Tab {
                 type: fieldType,
                 valuePattern: anonymizeValue(fieldValue)
               });
+
+              // Mark field name as seen
+              seenFieldNames.add(fieldName);
             });
 
             return fields;
@@ -572,5 +655,167 @@ export class Tab {
 
   destroy(): void {
     this.webContentsView.webContents.close();
+  }
+
+  /**
+   * Set window reference (called after tab creation to avoid circular dependency)
+   */
+  setWindow(window: Window): void {
+    this._window = window;
+  }
+
+  /**
+   * Inject recording overlay (Story 1.11 - AC 1, 2)
+   */
+  async injectRecordingOverlay(): Promise<void> {
+    this._isRecordingMode = true;
+
+    try {
+      await this.webContentsView.webContents.executeJavaScript(`
+        (function() {
+          // Remove existing overlay if present
+          const existing = document.getElementById('__blueberry-recording-overlay');
+          if (existing) existing.remove();
+
+          // Create style element
+          const style = document.createElement('style');
+          style.id = '__blueberry-recording-overlay-style';
+          style.textContent = \`
+            #__blueberry-recording-overlay {
+              position: fixed !important;
+              top: 0 !important;
+              left: 0 !important;
+              right: 0 !important;
+              bottom: 0 !important;
+              background: rgba(239, 68, 68, 0.03) !important;
+              z-index: 2147483646 !important;
+              pointer-events: none !important;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+            }
+            #__blueberry-recording-badge {
+              position: fixed !important;
+              top: 20px !important;
+              left: 50% !important;
+              transform: translateX(-50%) !important;
+              background: rgba(220, 38, 38, 0.95) !important;
+              color: white !important;
+              padding: 10px 20px !important;
+              border-radius: 20px !important;
+              font-size: 13px !important;
+              font-weight: 600 !important;
+              box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3) !important;
+              display: flex !important;
+              align-items: center !important;
+              gap: 8px !important;
+              animation: __blueberry_pulse 2s ease-in-out infinite, __blueberry_slideDown 0.3s ease-out !important;
+              z-index: 2147483647 !important;
+              pointer-events: none !important;
+            }
+            #__blueberry-recording-dot {
+              width: 8px !important;
+              height: 8px !important;
+              background: white !important;
+              border-radius: 50% !important;
+              animation: __blueberry_blink 1s ease-in-out infinite !important;
+            }
+            #__blueberry-recording-counter {
+              font-variant-numeric: tabular-nums !important;
+            }
+            @keyframes __blueberry_pulse {
+              0%, 100% { box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3); }
+              50% { box-shadow: 0 4px 20px rgba(220, 38, 38, 0.5); }
+            }
+            @keyframes __blueberry_blink {
+              0%, 100% { opacity: 1; }
+              50% { opacity: 0.3; }
+            }
+            @keyframes __blueberry_slideDown {
+              from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+              to { opacity: 1; transform: translateX(-50%) translateY(0); }
+            }
+          \`;
+
+          // Insert style into head (or create head if it doesn't exist)
+          const head = document.head || document.getElementsByTagName('head')[0] || document.documentElement;
+          head.insertBefore(style, head.firstChild);
+
+          // Create overlay element
+          const overlay = document.createElement('div');
+          overlay.id = '__blueberry-recording-overlay';
+          overlay.innerHTML = \`
+            <div id="__blueberry-recording-badge">
+              <div id="__blueberry-recording-dot"></div>
+              <span>🎬 Recording... (<span id="__blueberry-recording-counter">0</span> actions)</span>
+            </div>
+          \`;
+
+          // Insert into body (or create body if it doesn't exist)
+          const body = document.body || document.getElementsByTagName('body')[0] || document.documentElement;
+          body.appendChild(overlay);
+
+          // Listen for IPC events to update counter
+          window.__blueberry_updateRecordingCounter = (count) => {
+            const counter = document.getElementById('__blueberry-recording-counter');
+            if (counter) counter.textContent = count.toString();
+          };
+        })();
+      `);
+
+      log.info("[Tab] Recording overlay injected");
+    } catch (error) {
+      log.error("[Tab] Recording overlay injection error:", error);
+    }
+  }
+
+  /**
+   * Remove recording overlay (Story 1.11 - AC 3)
+   */
+  removeRecordingOverlay(): void {
+    this._isRecordingMode = false;
+
+    try {
+      this.webContentsView.webContents
+        .executeJavaScript(
+          `
+        (function() {
+          const overlay = document.getElementById('__blueberry-recording-overlay');
+          if (overlay) overlay.remove();
+          const style = document.getElementById('__blueberry-recording-overlay-style');
+          if (style) style.remove();
+          delete window.__blueberry_updateRecordingCounter;
+        })();
+      `,
+        )
+        .catch(() => {
+          // Silently ignore errors (page might be navigating)
+        });
+
+      log.info("[Tab] Recording overlay removed");
+    } catch (error) {
+      log.error("[Tab] Recording overlay removal error:", error);
+    }
+  }
+
+  /**
+   * Update recording counter in overlay (Story 1.11 - AC 2)
+   */
+  updateRecordingCounter(count: number): void {
+    if (!this._isRecordingMode) return;
+
+    try {
+      this.webContentsView.webContents
+        .executeJavaScript(
+          `
+        if (window.__blueberry_updateRecordingCounter) {
+          window.__blueberry_updateRecordingCounter(${count});
+        }
+      `,
+        )
+        .catch(() => {
+          // Silently ignore errors (page might be navigating)
+        });
+    } catch {
+      // Silently ignore errors (page might be navigating)
+    }
   }
 }

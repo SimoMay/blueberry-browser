@@ -14,6 +14,10 @@ import {
   EditAutomationSchema,
   DeleteAutomationSchema,
 } from "./schemas/patternSchemas";
+import {
+  StartRecordingSchema,
+  SaveRecordingSchema,
+} from "./schemas/recordingSchemas";
 import { MonitorManager } from "./MonitorManager";
 import {
   MonitorCreateSchema,
@@ -44,6 +48,9 @@ export class EventManager {
 
     // Pattern events
     this.handlePatternEvents();
+
+    // Recording events (Story 1.11)
+    this.handleRecordingEvents();
 
     // Monitor events
     this.handleMonitorEvents();
@@ -728,6 +735,153 @@ export class EventManager {
         // Call PatternManager (validation happens inside trackFormSubmission)
         return await patternManager.trackFormSubmission(data);
       } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+  }
+
+  /**
+   * Handle recording events (Story 1.11)
+   */
+  private handleRecordingEvents(): void {
+    const recordingManager = this.mainWindow.recordingManager;
+
+    // Start recording
+    ipcMain.handle("pattern:start-recording", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:start-recording", 10)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = StartRecordingSchema.parse(data);
+
+        // Start recording
+        return recordingManager.startRecording(validated.tabId);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Get action count (AC #9: zero-action check)
+    ipcMain.handle("pattern:get-action-count", async () => {
+      try {
+        const activeRecording = recordingManager.getActiveRecording();
+        if (!activeRecording) {
+          return { success: true, count: 0 };
+        }
+        return {
+          success: true,
+          count: recordingManager.getActionCount(activeRecording.tabId),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Stop recording
+    ipcMain.handle("pattern:stop-recording", async () => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:stop-recording", 10)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Get active recording session
+        const activeRecording = recordingManager.getActiveRecording();
+        if (!activeRecording) {
+          return {
+            success: false,
+            error: {
+              code: "NO_RECORDING",
+              message: "No active recording found",
+            },
+          };
+        }
+
+        // Stop recording
+        return recordingManager.stopRecording(activeRecording.tabId);
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Save recording
+    ipcMain.handle("pattern:save-recording", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:save-recording", 10)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = SaveRecordingSchema.parse(data);
+
+        // Convert to automation and save
+        const patternManager = PatternManager.getInstance();
+        return await patternManager.saveManualRecording(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
         return {
           success: false,
           error: {
