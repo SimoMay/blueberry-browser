@@ -17,9 +17,11 @@ interface PendingPatternData {
   notificationId: string;
   patternData: {
     id: string;
-    patternType: "navigation" | "form";
+    patternType: "navigation" | "form" | "copy-paste";
     confidence: number;
     occurrenceCount: number;
+    intentSummary?: string; // Story 1.13 - SHORT summary (20-30 words)
+    intentSummaryDetailed?: string; // Story 1.13 - DETAILED summary (40-50 words)
     patternData?: {
       sequence?: Array<{ url: string }>;
       domain?: string;
@@ -113,6 +115,8 @@ const SidebarContent: React.FC = () => {
         type: string;
         confidence: number;
         occurrenceCount: number;
+        intentSummary?: string; // Story 1.13
+        intentSummaryDetailed?: string; // Story 1.13
         patternData?: unknown;
       };
 
@@ -120,9 +124,11 @@ const SidebarContent: React.FC = () => {
         notificationId,
         patternData: {
           id: data.id,
-          patternType: data.type as "navigation" | "form",
+          patternType: data.type as "navigation" | "form" | "copy-paste",
           confidence: data.confidence,
           occurrenceCount: data.occurrenceCount,
+          intentSummary: data.intentSummary, // Story 1.13 - pass through intent summaries
+          intentSummaryDetailed: data.intentSummaryDetailed, // Story 1.13
           patternData:
             data.patternData as PendingPatternData["patternData"]["patternData"],
         },

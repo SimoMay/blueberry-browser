@@ -1,29 +1,54 @@
 import React, { useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Check, X } from "lucide-react";
 import { Button } from "@common/components/Button";
 import { useNotifications } from "../hooks/useNotifications";
 
-interface PatternActionMessageProps {
-  content: string;
-  patternId: string;
+// Note: electron-log not available in renderer, using console.error for logging
+
+/**
+ * AIPatternMessage Component
+ * Story 1.13: Conversational AI Pattern Notifications
+ *
+ * Displays AI-generated conversational pattern notifications with inline action buttons.
+ * Uses intent summaries from Story 1.12 (IntentSummarizer) for natural, context-aware messaging.
+ *
+ * Flow:
+ * 1. User clicks topbar notification → sidebar opens with this component
+ * 2. Displays friendly AI message: "Hey! I've noticed you're [intent]. Want to automate this?"
+ * 3. User clicks action button:
+ *    - [Yes, Automate]: Opens save modal, pre-fills with intent summaries
+ *    - [No Thanks]: Marks pattern as dismissed (patterns.dismissed=1)
+ *
+ * UX Design:
+ * - Light blue background (#EBF8FF light mode, #1E3A5F dark mode)
+ * - Sparkles icon for AI avatar
+ * - Inline action buttons (not modal dialogs)
+ * - Non-blocking, friendly tone
+ */
+
+interface AIPatternMessageProps {
+  content: string; // AI-generated conversational message (uses detailed summary)
+  patternId: string; // Pattern ID for IPC operations
   patternData: {
     id: string;
     patternType: "navigation" | "form" | "copy-paste";
     confidence: number;
     occurrenceCount: number;
+    intentSummary?: string; // SHORT summary (20-30 words) from IntentSummarizer
+    intentSummaryDetailed?: string; // DETAILED summary (40-50 words) from IntentSummarizer
     patternData?: {
       sequence?: Array<{ url: string }>;
       domain?: string;
       fields?: Array<unknown>;
     };
   };
-  notificationId: string;
-  onDismiss: () => void;
-  onAutomationSaved: (message: string) => void;
-  onError: (error: string) => void;
+  notificationId: string; // For dismissing notification after action
+  onDismiss: () => void; // Called when message is dismissed (hide UI)
+  onAutomationSaved: (message: string) => void; // Success callback
+  onError: (error: string) => void; // Error callback
 }
 
-export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
+export const AIPatternMessage: React.FC<AIPatternMessageProps> = ({
   content,
   patternId,
   patternData,
@@ -34,38 +59,50 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
 }) => {
   const { dismissNotification } = useNotifications();
   const [showForm, setShowForm] = useState(false);
-  const [automationName, setAutomationName] = useState("");
-  const [automationDescription, setAutomationDescription] = useState("");
+  const [automationName, setAutomationName] = useState(
+    patternData.intentSummary || "",
+  );
+  const [automationDescription, setAutomationDescription] = useState(
+    patternData.intentSummaryDetailed || "",
+  );
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleConvert = (): void => {
+  /**
+   * AC 4: [Yes, Automate] button handler
+   * Opens save form pre-filled with intent summaries
+   */
+  const handleAutomateClick = (): void => {
     setShowForm(true);
   };
 
-  const handleNotNow = (): void => {
-    // Just dismiss the message UI, don't mark pattern as dismissed
-    onDismiss();
-  };
-
-  const handleDismissPattern = async (): Promise<void> => {
+  /**
+   * AC 5: [No Thanks] button handler
+   * Dismisses pattern (marks patterns.dismissed=1) and removes notification
+   */
+  const handleNoThanksClick = async (): Promise<void> => {
     setIsProcessing(true);
     try {
-      // Dismiss pattern in database
+      // Call pattern:dismiss IPC (updates patterns.dismissed=1)
       await window.sidebarAPI.pattern.dismiss({ patternId });
 
-      // Dismiss notification (updates both DB and local state)
+      // Dismiss notification from topbar
       await dismissNotification(notificationId);
 
-      onAutomationSaved("Pattern dismissed successfully");
+      // AI response confirmation (AC 5)
+      onAutomationSaved("No problem! I won't suggest this again.");
       onDismiss();
     } catch (error) {
-      console.error("[PatternActionMessage] Dismiss error:", error);
+      console.error("[AIPatternMessage] Dismiss pattern error:", error);
       onError("Failed to dismiss pattern");
     } finally {
       setIsProcessing(false);
     }
   };
 
+  /**
+   * AC 4: Save automation handler
+   * Validates inputs and calls pattern:save-automation IPC (from Story 1.10)
+   */
   const handleSaveAutomation = async (): Promise<void> => {
     if (!automationName.trim()) {
       onError("Automation name is required");
@@ -84,27 +121,27 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
 
     setIsProcessing(true);
     try {
-      // Save automation to database
+      // Call pattern:save-automation IPC (existing from Story 1.10)
       const result = await window.sidebarAPI.pattern.saveAutomation({
         pattern_id: patternId,
         name: automationName.trim(),
         description: automationDescription.trim() || undefined,
       });
 
-      // Check if save was successful
       if (!result.success) {
         throw new Error(result.error?.message || "Failed to save automation");
       }
 
-      // Dismiss notification (updates both DB and local state)
+      // Dismiss notification from topbar (AC 4)
       await dismissNotification(notificationId);
 
+      // Success message (AC 4)
       onAutomationSaved(
-        `Automation "${automationName}" created successfully! You can now execute it anytime.`,
+        `Great! Saved as '${automationName}'. Find it in your Automation Library.`,
       );
       onDismiss();
     } catch (error) {
-      console.error("[PatternActionMessage] Save automation error:", error);
+      console.error("[AIPatternMessage] Save automation error:", error);
       onError(
         error instanceof Error ? error.message : "Failed to save automation",
       );
@@ -115,24 +152,25 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
 
   return (
     <div className="relative w-full animate-fade-in">
-      {/* Pattern Action Message Container - Distinctive styling */}
-      <div className="rounded-2xl border-2 border-primary/20 dark:border-primary/30 bg-primary/5 dark:bg-primary/10 p-5">
-        {/* Header with icon */}
+      {/* AI Pattern Message Container - Distinctive AI styling (AC 2) */}
+      <div className="rounded-2xl border-2 border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/50 p-5">
+        {/* Header with Sparkles AI avatar (AC 2) */}
         <div className="flex items-start gap-3 mb-3">
           <div className="flex-shrink-0 mt-1">
-            <Sparkles className="w-5 h-5 text-primary" />
+            <Sparkles className="w-5 h-5 text-blue-500 dark:text-blue-400" />
           </div>
           <div className="flex-1">
-            {/* AI message content */}
+            {/* AI conversational message content (AC 2) */}
             <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">
               {content}
             </p>
           </div>
         </div>
 
-        {/* Action buttons or form */}
+        {/* Action buttons or save form (AC 3, 4) */}
         {showForm ? (
           <div className="mt-4 space-y-3 pl-8">
+            {/* Pre-filled with SHORT summary (AC 4) */}
             <input
               type="text"
               placeholder="Automation name *"
@@ -143,9 +181,10 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
               className="w-full px-4 py-2 border border-border rounded-lg
                        bg-background dark:bg-muted/50 text-foreground
                        placeholder:text-muted-foreground
-                       focus:outline-none focus:ring-2 focus:ring-primary/50
+                       focus:outline-none focus:ring-2 focus:ring-blue-500
                        disabled:opacity-50"
             />
+            {/* Pre-filled with DETAILED summary (AC 4) */}
             <textarea
               placeholder="Description (optional)"
               value={automationDescription}
@@ -156,7 +195,7 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
               className="w-full px-4 py-2 border border-border rounded-lg
                        bg-background dark:bg-muted/50 text-foreground
                        placeholder:text-muted-foreground
-                       focus:outline-none focus:ring-2 focus:ring-primary/50
+                       focus:outline-none focus:ring-2 focus:ring-blue-500
                        disabled:opacity-50 resize-none"
             />
             <div className="flex gap-2">
@@ -180,34 +219,31 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
           </div>
         ) : (
           <div className="flex flex-wrap gap-2 mt-4 pl-8">
+            {/* AC 3: [Yes, Automate] button - primary styling (prominent) */}
             <Button
-              onClick={handleConvert}
+              onClick={handleAutomateClick}
               disabled={isProcessing}
               variant="default"
               size="sm"
+              className="bg-blue-600 hover:bg-blue-700 text-white"
             >
-              Convert to Automation
+              <Check className="w-4 h-4 mr-1" />
+              Yes, Automate
             </Button>
+            {/* AC 3: [No Thanks] button - secondary styling (de-emphasized) */}
             <Button
-              onClick={handleNotNow}
+              onClick={handleNoThanksClick}
               disabled={isProcessing}
               variant="secondary"
               size="sm"
             >
-              Not Now
-            </Button>
-            <Button
-              onClick={handleDismissPattern}
-              disabled={isProcessing}
-              variant="secondary"
-              size="sm"
-            >
-              Dismiss Pattern
+              <X className="w-4 h-4 mr-1" />
+              No Thanks
             </Button>
           </div>
         )}
 
-        {/* Pattern metadata - small text */}
+        {/* Pattern metadata - small text (AC 2) */}
         <div className="mt-3 pl-8 text-xs text-muted-foreground">
           {patternData.patternType === "navigation"
             ? "Navigation"
@@ -215,7 +251,8 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
               ? "Form"
               : "Copy/Paste"}{" "}
           pattern • {patternData.confidence.toFixed(0)}% confidence •{" "}
-          {patternData.occurrenceCount} occurrences
+          {patternData.occurrenceCount} occurrence
+          {patternData.occurrenceCount !== 1 ? "s" : ""}
         </div>
       </div>
     </div>

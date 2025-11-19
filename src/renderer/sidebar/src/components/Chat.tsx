@@ -7,14 +7,17 @@ import { useChat } from "../contexts/ChatContext";
 import { cn } from "@common/lib/utils";
 import { Button } from "@common/components/Button";
 import { PatternActionMessage } from "./PatternActionMessage";
+import { AIPatternMessage } from "./AIPatternMessage";
 
 interface PatternData {
   notificationId: string;
   patternData: {
     id: string;
-    patternType: "navigation" | "form";
+    patternType: "navigation" | "form" | "copy-paste";
     confidence: number;
     occurrenceCount: number;
+    intentSummary?: string; // Story 1.13 - SHORT summary (20-30 words)
+    intentSummaryDetailed?: string; // Story 1.13 - DETAILED summary (40-50 words)
     patternData?: {
       sequence?: Array<{ url: string }>;
       domain?: string;
@@ -267,11 +270,25 @@ const ChatInput: React.FC<{
 };
 
 // Helper function to generate conversational pattern messages
+// Story 1.13 - AC 2: Use SHORT summary for conversational message (more natural)
 const generatePatternMessage = (
   pattern: PatternData["patternData"],
 ): string => {
-  const { patternType, occurrenceCount, confidence, patternData } = pattern;
+  const {
+    patternType,
+    occurrenceCount,
+    confidence,
+    patternData,
+    intentSummaryDetailed,
+  } = pattern;
 
+  // Story 1.13 - AC 2: Use DETAILED summary for conversational message (includes value prop)
+  if (intentSummaryDetailed) {
+    // DETAILED summary now includes the value prop, so just wrap it in friendly greeting
+    return `Hey! I noticed you've been ${intentSummaryDetailed.toLowerCase()}. Want to save this as an automation?`;
+  }
+
+  // Fallback to template-based messages (Story 1.13 - AC 6)
   if (patternType === "navigation" && patternData?.sequence) {
     const urls = patternData.sequence
       .slice(0, 5) // Show first 5 URLs
@@ -291,6 +308,10 @@ const generatePatternMessage = (
   if (patternType === "form" && patternData?.domain) {
     const fieldCount = patternData.fields?.length || 0;
     return `I've observed you filling out the ${patternData.domain} form (${fieldCount} fields) ${occurrenceCount} times. I can help automate this repetitive task. Would you like to save this as an automation?`;
+  }
+
+  if (patternType === "copy-paste") {
+    return `I detected a copy/paste pattern that you've repeated ${occurrenceCount} times with ${confidence.toFixed(0)}% confidence. Would you like to convert this into an automation?`;
   }
 
   // Fallback generic message
@@ -321,27 +342,53 @@ const ConversationTurnComponent: React.FC<{
     {turn.assistant && (
       <>
         {turn.assistant.patternData ? (
-          <PatternActionMessage
-            content={turn.assistant.content}
-            patternId={turn.assistant.patternData.patternData.id}
-            patternData={turn.assistant.patternData.patternData}
-            notificationId={turn.assistant.patternData.notificationId}
-            onDismiss={() => {
-              if (onPatternDismiss && turn.assistant?.patternData) {
-                onPatternDismiss(turn.assistant.id);
-              }
-            }}
-            onAutomationSaved={(message) => {
-              if (onPatternAutomationSaved) {
-                onPatternAutomationSaved(message);
-              }
-            }}
-            onError={(error) => {
-              if (onPatternError) {
-                onPatternError(error);
-              }
-            }}
-          />
+          // Story 1.13 - AC 2: Use AIPatternMessage when intent summaries available
+          turn.assistant.patternData.patternData.intentSummaryDetailed ? (
+            <AIPatternMessage
+              content={turn.assistant.content}
+              patternId={turn.assistant.patternData.patternData.id}
+              patternData={turn.assistant.patternData.patternData}
+              notificationId={turn.assistant.patternData.notificationId}
+              onDismiss={() => {
+                if (onPatternDismiss && turn.assistant?.patternData) {
+                  onPatternDismiss(turn.assistant.id);
+                }
+              }}
+              onAutomationSaved={(message) => {
+                if (onPatternAutomationSaved) {
+                  onPatternAutomationSaved(message);
+                }
+              }}
+              onError={(error) => {
+                if (onPatternError) {
+                  onPatternError(error);
+                }
+              }}
+            />
+          ) : (
+            // Fallback to PatternActionMessage for backward compatibility
+            <PatternActionMessage
+              content={turn.assistant.content}
+              patternId={turn.assistant.patternData.patternData.id}
+              patternData={turn.assistant.patternData.patternData}
+              notificationId={turn.assistant.patternData.notificationId}
+              onDismiss={() => {
+                if (onPatternDismiss && turn.assistant?.patternData) {
+                  onPatternDismiss(turn.assistant.id);
+                }
+              }}
+              onAutomationSaved={(message) => {
+                if (onPatternAutomationSaved) {
+                  onPatternAutomationSaved(message);
+                }
+              }}
+              onError={(error) => {
+                if (onPatternError) {
+                  onPatternError(error);
+                }
+              }}
+            />
+          )
         ) : (
           <AssistantMessage
             content={turn.assistant.content}

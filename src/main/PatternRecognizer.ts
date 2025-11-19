@@ -28,6 +28,8 @@ interface PatternRow {
   dismissed: number;
   first_seen?: number;
   last_seen?: number;
+  intent_summary?: string; // Story 1.13 - SHORT summary (20-30 words)
+  intent_summary_detailed?: string; // Story 1.13 - DETAILED summary (40-50 words)
 }
 
 /**
@@ -512,6 +514,8 @@ export class PatternRecognizer {
     firstSeen?: number;
     lastSeen?: number;
     patternData: NavigationPattern | FormPattern;
+    intentSummary?: string; // SHORT summary (20-30 words) - Story 1.13
+    intentSummaryDetailed?: string; // DETAILED summary (40-50 words) - Story 1.13
   } | null {
     if (!this.db) {
       log.error("[PatternRecognizer] Database not initialized");
@@ -520,7 +524,8 @@ export class PatternRecognizer {
 
     try {
       const stmt = this.db.prepare(`
-        SELECT id, type, pattern_data, confidence, occurrence_count, first_seen, last_seen
+        SELECT id, type, pattern_data, confidence, occurrence_count, first_seen, last_seen,
+               intent_summary, intent_summary_detailed
         FROM patterns
         WHERE id = ? AND dismissed = 0
       `);
@@ -535,6 +540,8 @@ export class PatternRecognizer {
           firstSeen: row.first_seen,
           lastSeen: row.last_seen,
           patternData: JSON.parse(row.pattern_data),
+          intentSummary: row.intent_summary || undefined, // Story 1.13 - SHORT summary
+          intentSummaryDetailed: row.intent_summary_detailed || undefined, // Story 1.13 - DETAILED summary
         };
       }
       return null;
@@ -627,14 +634,19 @@ export class PatternRecognizer {
             continue;
           }
 
+          // Story 1.13 - AC 1: Use SHORT summary if available, otherwise fall back to template
+          const notificationMessage = patternData.intentSummary
+            ? patternData.intentSummary
+            : `${pattern.type === "navigation" ? "Navigation" : pattern.type === "form" ? "Form" : "Copy/Paste"} pattern detected with ${pattern.confidence.toFixed(0)}% confidence`;
+
           // Create notification through existing NotificationManager (Story 1.9 refactor)
           const notification =
             await this.notificationManager.createNotification({
               type: "pattern",
               severity: "info",
               title: "Pattern Detected",
-              message: `${pattern.type === "navigation" ? "Navigation" : "Form"} pattern detected with ${pattern.confidence.toFixed(0)}% confidence`,
-              data: patternData as Record<string, unknown>, // Store pattern data as object
+              message: notificationMessage,
+              data: patternData as Record<string, unknown>, // Store pattern data as object (includes intent summaries)
             });
 
           // Broadcast notification to sidebar UI

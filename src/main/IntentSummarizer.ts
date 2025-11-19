@@ -234,13 +234,13 @@ export class IntentSummarizer {
 
       return `A user repeatedly navigates: ${sequence}.
 
-Generate TWO descriptions from the user's perspective:
-1. SHORT (for notifications, 20-30 words): Start with a verb (e.g., "Checking...", "Researching...")
-2. DETAILED (for chat, 40-50 words): Include purpose, frequency, and specific details
+Generate TWO descriptions in SECOND PERSON (addressing the user as "you"):
+1. SHORT (for notifications, 20-30 words): Start with a verb in present continuous (e.g., "Checking...", "Researching...")
+2. DETAILED (for chat, 40-50 words): Write in second person (use "you're", "you", "your"). Describe what they're doing and why.
 
 Format your response as:
 SHORT: [your 20-30 word description]
-DETAILED: [your 40-50 word description]`;
+DETAILED: [your 40-50 word description starting with a verb like "repeatedly navigating..." or "browsing..."]`;
     } else if (
       patternData.type === "form" &&
       "fields" in patternData.pattern_data
@@ -275,24 +275,33 @@ DETAILED: [your 40-50 word description]`;
         // If only hidden fields, describe generically
         return `A user repeatedly submits a form on ${formPattern.domain}.
 
-Generate TWO descriptions from the user's perspective:
-1. SHORT (for notifications, 20-30 words): Start with a verb (e.g., "Submitting...", "Searching...")
-2. DETAILED (for chat, 40-50 words): Include what they're doing, why, and any patterns
+Generate TWO descriptions in SECOND PERSON (addressing the user as "you"):
+1. SHORT (for notifications, 20-30 words): Start with a verb in present continuous (e.g., "Submitting...", "Searching...")
+2. DETAILED (for chat, 40-50 words): Write in second person (use "you're", "you", "your"). Describe what they're doing, why, and any patterns.
 
 Format your response as:
 SHORT: [your 20-30 word description]
-DETAILED: [your 40-50 word description]`;
+DETAILED: [your 40-50 word description starting with a verb like "repeatedly submitting..." or "using..."]`;
       }
 
       return `A user repeatedly fills a form on ${formPattern.domain} with: ${fieldDescriptions}.
 
-Generate TWO descriptions from the user's perspective:
-1. SHORT (for notifications, 20-30 words): Start with a verb (e.g., "Searching for...", "Logging into...")
-2. DETAILED (for chat, 40-50 words): Include what they're searching for, filtering by, or trying to accomplish
+Generate TWO descriptions (NO greetings like "Hey" - just the activity):
 
-Format your response as:
-SHORT: [your 20-30 word description]
-DETAILED: [your 40-50 word description]`;
+1. SHORT (20-30 words): Start with -ing verb (e.g., "Searching for remote jobs in Stockholm on Indeed")
+
+2. DETAILED (40-50 words): Start with -ing verb, describe:
+   - WHAT they're doing (be specific: include search terms, filters, locations)
+   - WHY automation helps ("so you can run this search with one click instead of filling out the form each time")
+   - Use natural, conversational language (use "you", "your")
+
+Format:
+SHORT: [description starting with -ing verb]
+DETAILED: [description starting with -ing verb, includes what they're doing and why automation helps]
+
+Example:
+SHORT: Searching for remote software engineer jobs in Stockholm on Indeed
+DETAILED: searching for "remote software engineer" positions on Indeed, filtering by Stockholm location. Automation will save you from typing the same search and location every time - just click and the form fills instantly`;
     } else if (
       patternData.type === "copy-paste" &&
       "pairs" in patternData.pattern_data
@@ -304,13 +313,13 @@ DETAILED: [your 40-50 word description]`;
       if (!firstPair) {
         return `A user performs repeated copy/paste operations.
 
-Generate TWO descriptions from the user's perspective:
-1. SHORT (for notifications, 20-30 words): Start with a verb (e.g., "Copying...", "Transferring...")
-2. DETAILED (for chat, 40-50 words): Include context and purpose
+Generate TWO descriptions in SECOND PERSON (addressing the user as "you"):
+1. SHORT (for notifications, 20-30 words): Start with a verb in present continuous (e.g., "Copying...", "Transferring...")
+2. DETAILED (for chat, 40-50 words): Write in second person (use "you're", "you", "your"). Include context and purpose.
 
 Format your response as:
 SHORT: [your 20-30 word description]
-DETAILED: [your 40-50 word description]`;
+DETAILED: [your 40-50 word description starting with a verb like "repeatedly copying..." or "transferring..."]`;
       }
 
       // Extract source and destination page titles
@@ -345,16 +354,16 @@ Context:
 
 This is likely a SEARCH or FORM WORKFLOW on the same site (not data transfer between sites).
 
-Generate TWO descriptions from the user's perspective:
-1. SHORT (for notifications, 20-30 words): Start with a verb (e.g., "Searching for...", "Entering...")
-2. DETAILED (for chat, 40-50 words): Describe what they're searching for or what workflow they're repeating
+Generate TWO descriptions in SECOND PERSON (addressing the user as "you"):
+1. SHORT (for notifications, 20-30 words): Start with a verb in present continuous (e.g., "Searching for...", "Entering...")
+2. DETAILED (for chat, 40-50 words): Write in second person (use "you're", "you", "your"). Describe what they're searching for or what workflow they're repeating.
 
 Format your response as:
 SHORT: [your 20-30 word description]
-DETAILED: [your 40-50 word description]
+DETAILED: [your 40-50 word description starting with a verb like "repeatedly searching for..." or "entering..."]
 
 Examples for same-site workflows:
-SHORT: searching for "meta quest 3" on Blocket by copying and pasting the search term
+SHORT: Searching for "meta quest 3" on Blocket by copying and pasting the search term
 DETAILED: repeatedly searching for "meta quest 3" on Blocket by copying the search query and pasting it into the search box, likely checking availability across different sessions or tabs`;
       } else {
         // Cross-site pattern: data transfer between platforms
@@ -367,25 +376,25 @@ Context:
 
 This is CROSS-SITE data transfer (not same-site search/form workflow).
 
-Generate TWO descriptions from the user's perspective:
-1. SHORT (for notifications, 20-30 words): Start with a verb (e.g., "Copying contact info...", "Transferring data...")
-2. DETAILED (for chat, 40-50 words): Describe the data transfer workflow - what data is being moved and why
+Generate TWO descriptions in SECOND PERSON (addressing the user as "you"):
+1. SHORT (for notifications, 20-30 words): Start with a verb in present continuous (e.g., "Copying contact info...", "Transferring data...")
+2. DETAILED (for chat, 40-50 words): Write in second person (use "you're", "you", "your"). Describe the data transfer workflow - what data is being moved and why.
 
 Format your response as:
 SHORT: [your 20-30 word description]
-DETAILED: [your 40-50 word description]
+DETAILED: [your 40-50 word description starting with a verb like "repeatedly copying..." or "transferring..."]
 
 Examples for cross-site workflows:
-SHORT: copying contact info from LinkedIn to CRM
-DETAILED: copying contact information from LinkedIn profiles to a customer relationship management system for sales lead tracking`;
+SHORT: Copying contact info from LinkedIn to CRM
+DETAILED: repeatedly copying contact information from LinkedIn profiles to a customer relationship management system for sales lead tracking`;
       }
     }
 
     return `A user performs a repeated action.
 
-Generate TWO descriptions from the user's perspective:
-1. SHORT (for notifications, 20-30 words): Start with a verb
-2. DETAILED (for chat, 40-50 words): Include context and purpose
+Generate TWO descriptions in SECOND PERSON (addressing the user as "you"):
+1. SHORT (for notifications, 20-30 words): Start with a verb in present continuous
+2. DETAILED (for chat, 40-50 words): Write in second person (use "you're", "you", "your"). Include context and purpose
 
 Format your response as:
 SHORT: [your 20-30 word description]
