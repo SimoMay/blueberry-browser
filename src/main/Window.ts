@@ -5,6 +5,7 @@ import { TopBar } from "./TopBar";
 import { SideBar } from "./SideBar";
 import { PatternRecognizer } from "./PatternRecognizer";
 import { RecordingManager } from "./RecordingManager";
+import { AutomationExecutor } from "./AutomationExecutor"; // Story 1.14
 
 export class Window {
   private _baseWindow: BaseWindow;
@@ -14,6 +15,7 @@ export class Window {
   private _topBar: TopBar;
   private _sideBar: SideBar;
   private _recordingManager: RecordingManager;
+  private _automationExecutor: AutomationExecutor; // Story 1.14
 
   constructor() {
     // Create the browser window.
@@ -32,6 +34,7 @@ export class Window {
     this._topBar = new TopBar(this._baseWindow);
     this._sideBar = new SideBar(this._baseWindow);
     this._recordingManager = new RecordingManager(this);
+    this._automationExecutor = new AutomationExecutor(this); // Story 1.14
 
     // AC #10: Clear any stale recording state from previous sessions
     this._recordingManager.clearStaleRecordings();
@@ -311,6 +314,11 @@ export class Window {
   // Getter for recordingManager
   get recordingManager(): RecordingManager {
     return this._recordingManager;
+  }
+
+  // Getter for automationExecutor (Story 1.14)
+  get automationExecutor(): AutomationExecutor {
+    return this._automationExecutor;
   }
 
   // Helper method to send events to sidebar

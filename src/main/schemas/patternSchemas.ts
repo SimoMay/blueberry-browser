@@ -88,6 +88,27 @@ export const PasteEventSchema = z.object({
 });
 
 /**
+ * Proactive suggestion schemas (Story 1.14)
+ */
+export const SuggestContinuationSchema = z.object({
+  patternId: z.string().min(1, { message: "Pattern ID is required" }),
+  intentSummary: z.string(),
+  estimatedItems: z.number().int().positive(),
+  matchCount: z.number().int().min(2),
+});
+
+export const StartContinuationSchema = z.object({
+  patternId: z.string().min(1, { message: "Pattern ID is required" }),
+  itemCount: z.number().int().positive().max(100, {
+    message: "Item count must be at most 100",
+  }),
+});
+
+export const CancelExecutionSchema = z.object({
+  executionId: z.string().min(1, { message: "Execution ID is required" }),
+});
+
+/**
  * Type exports for TypeScript
  */
 export type PatternTrackInput = z.infer<typeof PatternTrackSchema>;
@@ -98,3 +119,8 @@ export type EditAutomationInput = z.infer<typeof EditAutomationSchema>;
 export type DeleteAutomationInput = z.infer<typeof DeleteAutomationSchema>;
 export type CopyEventInput = z.infer<typeof CopyEventSchema>;
 export type PasteEventInput = z.infer<typeof PasteEventSchema>;
+export type SuggestContinuationInput = z.infer<
+  typeof SuggestContinuationSchema
+>;
+export type StartContinuationInput = z.infer<typeof StartContinuationSchema>;
+export type CancelExecutionInput = z.infer<typeof CancelExecutionSchema>;

@@ -1,6 +1,11 @@
 import Database from "better-sqlite3";
 import log from "electron-log";
-import { PatternType, NavigationPattern, FormPattern } from "./PatternManager";
+import {
+  PatternType,
+  NavigationPattern,
+  FormPattern,
+  CopyPastePattern,
+} from "./PatternManager";
 import { NotificationManager } from "./NotificationManager";
 import { EventManager } from "./EventManager";
 import { IntentSummarizer } from "./IntentSummarizer"; // Story 1.12
@@ -709,5 +714,526 @@ export class PatternRecognizer {
   public async triggerAnalysis(): Promise<void> {
     log.info("[PatternRecognizer] Manual analysis triggered");
     await this.analyzePatterns();
+  }
+
+  /**
+   * Session action tracking for mid-workflow detection (Story 1.14)
+   */
+  private sessionActions: Array<{
+    type: string;
+    data: unknown;
+    timestamp: number;
+  }> = [];
+  private lastSuggestionTimestamp = 0;
+  private readonly SUGGESTION_COOLDOWN_MS = 10 * 1000; // 10 seconds cooldown (Story 1.14 - reduced for better UX)
+
+  /**
+   * Track user action in current session (Story 1.14)
+   * Called by PatternManager when user performs trackable actions
+   */
+  public trackSessionAction(type: string, data: unknown): void {
+    this.sessionActions.push({
+      type,
+      data,
+      timestamp: Date.now(),
+    });
+
+    // Keep only last 50 actions to avoid memory bloat
+    if (this.sessionActions.length > 50) {
+      this.sessionActions.shift();
+    }
+
+    // Trigger mid-workflow detection
+    this.detectMidWorkflowPattern().catch((error) => {
+      log.error("[PatternRecognizer] Mid-workflow detection error:", error);
+    });
+  }
+
+  /**
+   * Detect mid-workflow pattern and trigger proactive suggestions (Story 1.14)
+   * Analyzes session actions against stored patterns
+   * Triggers suggestion after 2-3 iterations detected
+   */
+  public async detectMidWorkflowPattern(): Promise<void> {
+    try {
+      // Cooldown check - don't spam suggestions
+      const now = Date.now();
+      if (now - this.lastSuggestionTimestamp < this.SUGGESTION_COOLDOWN_MS) {
+        log.info(
+          `[PatternRecognizer] Mid-workflow detection skipped: cooldown active (${Math.round((this.SUGGESTION_COOLDOWN_MS - (now - this.lastSuggestionTimestamp)) / 1000)}s remaining)`,
+        );
+        return;
+      }
+
+      // Fetch high-confidence patterns (>70%) with intent summaries
+      const patterns = this.fetchPatternsForMidWorkflow();
+
+      log.info(
+        `[PatternRecognizer] Mid-workflow check: ${patterns.length} eligible patterns, ${this.sessionActions.length} session actions`,
+      );
+
+      if (patterns.length === 0) {
+        return;
+      }
+
+      // Compare session actions against each pattern and collect matches
+      const matchedPatterns: Array<{
+        pattern: PatternRow;
+        matchCount: number;
+        sequenceLength: number;
+      }> = [];
+
+      for (const pattern of patterns) {
+        const matchCount = this.countRecentMatches(pattern);
+
+        // Only log patterns with actual matches (reduces log spam)
+        if (matchCount > 0) {
+          log.info(
+            `[PatternRecognizer] Pattern ${pattern.id} (${pattern.type}): ${matchCount} matches`,
+          );
+        }
+
+        // Collect patterns with 2+ matches
+        if (matchCount >= 2) {
+          const patternData = JSON.parse(pattern.pattern_data);
+
+          // For navigation patterns, use iteration length (not full recorded history)
+          let sequenceLength = 1;
+          if (pattern.type === "navigation") {
+            const navPattern = patternData as NavigationPattern;
+            const iteration = this.extractPatternIteration(navPattern);
+            sequenceLength = iteration.length;
+          } else {
+            sequenceLength =
+              patternData.fields?.length || patternData.pairs?.length || 1;
+          }
+
+          matchedPatterns.push({
+            pattern,
+            matchCount,
+            sequenceLength,
+          });
+        }
+      }
+
+      // Sort by sequence length (prefer longer, more complex patterns)
+      // Then by match count (prefer more repetitions)
+      matchedPatterns.sort((a, b) => {
+        if (b.sequenceLength !== a.sequenceLength) {
+          return b.sequenceLength - a.sequenceLength; // Longer first
+        }
+        return b.matchCount - a.matchCount; // More matches first
+      });
+
+      // Suggest the best matching pattern (longest, most repeated)
+      if (matchedPatterns.length > 0) {
+        const { pattern, matchCount } = matchedPatterns[0];
+        log.info(
+          `[PatternRecognizer] Best match: ${pattern.id} (${matchedPatterns[0].sequenceLength} steps, ${matchCount} matches)`,
+        );
+
+        // Trigger suggestion after 2+ matches detected (not just 2-3, allow ongoing patterns)
+        // Cooldown mechanism prevents spam
+        {
+          const estimatedItems = this.estimateRemainingItems(pattern);
+
+          // Send proactive suggestion to sidebar
+          if (this.window) {
+            const patternData = this.fetchPatternById(pattern.id);
+            if (patternData) {
+              // Use intent summary if available, otherwise generate template
+              const intentSummary =
+                patternData.intentSummary ||
+                this.generateTemplateSummary(
+                  pattern.type,
+                  patternData.patternData,
+                );
+
+              // Broadcast suggestion to sidebar
+              const suggestionData = {
+                patternId: pattern.id,
+                intentSummary,
+                estimatedItems,
+                matchCount,
+              };
+
+              log.info(
+                `[PatternRecognizer] Sending IPC event to sidebar:`,
+                suggestionData,
+              );
+
+              // Send suggestion to sidebar using helper method (Story 1.14)
+              if (this.window) {
+                this.window.sendToSidebar(
+                  "pattern:suggest-continuation",
+                  suggestionData,
+                );
+                log.info(
+                  `[PatternRecognizer] Proactive suggestion sent to sidebar`,
+                );
+              } else {
+                log.error(
+                  `[PatternRecognizer] Cannot send suggestion: Window not initialized`,
+                );
+              }
+
+              log.info(
+                `[PatternRecognizer] Mid-workflow suggestion triggered: ${pattern.id} (${matchCount} matches, ~${estimatedItems} items remaining)`,
+              );
+
+              // Update cooldown timestamp
+              this.lastSuggestionTimestamp = now;
+            }
+          } else {
+            log.warn(
+              `[PatternRecognizer] Cannot send suggestion: Window not initialized`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      log.error("[PatternRecognizer] Mid-workflow detection error:", error);
+    }
+  }
+
+  /**
+   * Fetch patterns suitable for mid-workflow detection
+   * Filters: Not dismissed only (no confidence threshold)
+   * Note: Detection relies on session repetition counting (2-3 matches),
+   *       not historical pattern confidence
+   */
+  private fetchPatternsForMidWorkflow(): PatternRow[] {
+    if (!this.db) {
+      return [];
+    }
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT id, type, pattern_data, occurrence_count, confidence,
+               intent_summary, intent_summary_detailed
+        FROM patterns
+        WHERE dismissed = 0
+        ORDER BY last_seen DESC
+        LIMIT 50
+      `);
+
+      return stmt.all() as PatternRow[];
+    } catch (error) {
+      log.error(
+        "[PatternRecognizer] Error fetching patterns for mid-workflow:",
+        error,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Extract one iteration of a navigation pattern by detecting pattern repetition
+   * Finds when the sequence returns to the starting domain after visiting other domains
+   */
+  private extractPatternIteration(navPattern: NavigationPattern): Array<{
+    url: string;
+    timestamp: number;
+    tabId: string;
+  }> {
+    if (navPattern.sequence.length === 0) {
+      return [];
+    }
+
+    // If only 1 URL, that's the iteration
+    if (navPattern.sequence.length === 1) {
+      return [navPattern.sequence[0]];
+    }
+
+    const iteration = [navPattern.sequence[0]];
+
+    try {
+      // Extract starting domain
+      const startingDomain = new URL(navPattern.sequence[0].url).hostname;
+      let visitedDifferentDomain = false;
+
+      // Continue adding URLs until we return to the starting domain (after visiting elsewhere)
+      for (let i = 1; i < navPattern.sequence.length; i++) {
+        const currentUrl = navPattern.sequence[i].url;
+        const currentDomain = new URL(currentUrl).hostname;
+
+        // Track if we've left the starting domain
+        if (currentDomain !== startingDomain) {
+          visitedDifferentDomain = true;
+        }
+
+        iteration.push(navPattern.sequence[i]);
+
+        // Only consider it a "return" if we've been somewhere else first
+        if (
+          currentDomain === startingDomain &&
+          visitedDifferentDomain &&
+          i > 0
+        ) {
+          break;
+        }
+      }
+    } catch (error) {
+      log.error(
+        "[PatternRecognizer] Error extracting pattern iteration:",
+        error,
+      );
+      // Fallback: return first element if URL parsing fails
+      return [navPattern.sequence[0]];
+    }
+
+    return iteration;
+  }
+
+  /**
+   * Count how many times a pattern has been repeated in current session
+   * Heuristic: Look for similar action sequences in session history
+   */
+  private countRecentMatches(pattern: PatternRow): number {
+    try {
+      const patternData = JSON.parse(pattern.pattern_data);
+
+      if (pattern.type === "navigation") {
+        // Count navigation sequences matching this pattern
+        const navPattern = patternData as NavigationPattern;
+
+        // Extract ONE iteration from the stored pattern (not full recorded history)
+        const iteration = this.extractPatternIteration(navPattern);
+        const sequenceLength = iteration.length;
+
+        // Look for repeated URL sequences
+        let matches = 0;
+        const recentNavs = this.sessionActions
+          .filter((a) => a.type === "navigation")
+          .slice(-20); // Last 20 navigation actions
+
+        // Create a minimal pattern with just the iteration for matching
+        const iterationPattern: NavigationPattern = {
+          sequence: iteration,
+          sessionGap: navPattern.sessionGap,
+        };
+
+        for (let i = 0; i < recentNavs.length - sequenceLength + 1; i++) {
+          const slice = recentNavs.slice(i, i + sequenceLength);
+          if (this.matchesNavigationPattern(slice, iterationPattern)) {
+            matches++;
+          }
+        }
+
+        return matches;
+      } else if (pattern.type === "form") {
+        // Count form submissions matching this pattern
+        const formPattern = patternData as FormPattern;
+        const recentForms = this.sessionActions
+          .filter((a) => a.type === "form")
+          .slice(-10); // Last 10 form submissions
+
+        let matches = 0;
+        for (const action of recentForms) {
+          if (this.matchesFormPattern(action.data, formPattern)) {
+            matches++;
+          }
+        }
+
+        return matches;
+      } else if (pattern.type === "copy-paste") {
+        // Count copy-paste pairs matching this pattern
+        const copyPastePattern = patternData as CopyPastePattern;
+        const recentCopyPastes = this.sessionActions
+          .filter((a) => a.type === "copy-paste")
+          .slice(-10); // Last 10 copy-paste actions
+
+        let matches = 0;
+        for (const action of recentCopyPastes) {
+          if (this.matchesCopyPastePattern(action.data, copyPastePattern)) {
+            matches++;
+          }
+        }
+
+        return matches;
+      }
+
+      return 0;
+    } catch (error) {
+      log.error("[PatternRecognizer] Error counting matches:", error);
+      return 0;
+    }
+  }
+
+  /**
+   * Check if a sequence of session actions matches a navigation pattern
+   */
+  private matchesNavigationPattern(
+    actions: Array<{ type: string; data: unknown; timestamp: number }>,
+    pattern: NavigationPattern,
+  ): boolean {
+    if (actions.length !== pattern.sequence.length) {
+      return false;
+    }
+
+    for (let i = 0; i < actions.length; i++) {
+      const actionData = actions[i].data as { url?: string };
+      const patternUrl = pattern.sequence[i].url;
+
+      // Simple URL domain comparison (ignore query params)
+      try {
+        const actionDomain = actionData.url
+          ? new URL(actionData.url).hostname
+          : "";
+        const patternDomain = new URL(patternUrl).hostname;
+
+        if (actionDomain !== patternDomain) {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Check if a form submission matches a form pattern
+   */
+  private matchesFormPattern(
+    actionData: unknown,
+    pattern: FormPattern,
+  ): boolean {
+    try {
+      const formData = actionData as { domain?: string; formSelector?: string };
+
+      return (
+        formData.domain === pattern.domain &&
+        formData.formSelector === pattern.formSelector
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check if a copy-paste action matches a copy-paste pattern
+   */
+  private matchesCopyPastePattern(
+    actionData: unknown,
+    pattern: CopyPastePattern,
+  ): boolean {
+    try {
+      const cpData = actionData as {
+        sourceUrl?: string;
+        destinationUrl?: string;
+        sourceElement?: string;
+        destinationElement?: string;
+      };
+
+      // Pattern has array of pairs, check if action matches any pair
+      if (!pattern.pairs || pattern.pairs.length === 0) {
+        return false;
+      }
+
+      // Compare against first pair (representative of the pattern)
+      const firstPair = pattern.pairs[0];
+
+      // Compare source and destination URLs by hostname
+      try {
+        const actionSourceHost = cpData.sourceUrl
+          ? new URL(cpData.sourceUrl).hostname
+          : "";
+        const actionDestHost = cpData.destinationUrl
+          ? new URL(cpData.destinationUrl).hostname
+          : "";
+        const patternSourceHost = new URL(firstPair.sourceUrl).hostname;
+        const patternDestHost = new URL(firstPair.destinationUrl).hostname;
+
+        return (
+          actionSourceHost === patternSourceHost &&
+          actionDestHost === patternDestHost &&
+          cpData.sourceElement === firstPair.sourceElement &&
+          cpData.destinationElement === firstPair.destinationElement
+        );
+      } catch {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Estimate how many more items user might want to process
+   * Simple heuristic: Default to 5-10 items based on pattern type
+   */
+  private estimateRemainingItems(pattern: PatternRow): number {
+    // Navigation patterns: Default to 5 more pages
+    if (pattern.type === "navigation") {
+      return 5;
+    }
+
+    // Form patterns: Default to 3 more forms
+    if (pattern.type === "form") {
+      return 3;
+    }
+
+    return 5; // Default fallback
+  }
+
+  /**
+   * Generate a template-based intent summary for patterns without AI summaries
+   * Fallback when intent_summary is not available
+   */
+  private generateTemplateSummary(
+    patternType: PatternType,
+    patternData: NavigationPattern | FormPattern,
+  ): string {
+    try {
+      if (patternType === "navigation") {
+        const navPattern = patternData as NavigationPattern;
+        const domains = navPattern.sequence
+          .map((s) => {
+            try {
+              return new URL(s.url).hostname;
+            } catch {
+              return "unknown site";
+            }
+          })
+          .filter((d, i, arr) => arr.indexOf(d) === i); // unique domains
+
+        if (domains.length === 1) {
+          return `navigating through ${domains[0]}`;
+        } else if (domains.length === 2) {
+          return `navigating between ${domains[0]} and ${domains[1]}`;
+        } else {
+          return `navigating across ${domains.length} different sites`;
+        }
+      } else if (patternType === "form") {
+        const formPattern = patternData as FormPattern;
+        const domain = formPattern.domain;
+        const fieldCount = formPattern.fields.length;
+
+        return `filling out forms on ${domain} with ${fieldCount} field${fieldCount > 1 ? "s" : ""}`;
+      } else if (patternType === "copy-paste") {
+        // Copy-paste pattern
+        return `copying and pasting content between pages`;
+      }
+
+      return "performing a repeated workflow";
+    } catch (error) {
+      log.error(
+        "[PatternRecognizer] Error generating template summary:",
+        error,
+      );
+      return "performing a repeated workflow";
+    }
+  }
+
+  /**
+   * Get Window instance (for sidebar access in mid-workflow detection)
+   * This is set by the Window class during initialization
+   */
+  private window!: import("./Window").Window;
+
+  public setWindow(window: import("./Window").Window): void {
+    this.window = window;
   }
 }

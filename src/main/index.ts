@@ -29,12 +29,13 @@ const createWindow = (): Window => {
   menu = new AppMenu(window);
   eventManager = new EventManager(window);
 
-  // Set NotificationManager and EventManager in PatternRecognizer (Story 1.9 - for pattern notifications)
+  // Set NotificationManager, EventManager, and Window in PatternRecognizer (Story 1.9 + Story 1.14)
   if (patternRecognizer && notificationManager && eventManager) {
     patternRecognizer.setNotificationManager(notificationManager);
     patternRecognizer.setEventManager(eventManager);
+    patternRecognizer.setWindow(window); // Story 1.14 - for mid-workflow suggestions
     log.info(
-      "[App] NotificationManager and EventManager linked to PatternRecognizer",
+      "[App] NotificationManager, EventManager, and Window linked to PatternRecognizer",
     );
   }
 

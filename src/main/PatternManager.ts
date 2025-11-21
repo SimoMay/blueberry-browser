@@ -9,6 +9,8 @@ import {
 } from "./schemas/patternSchemas";
 import { SaveRecordingInput } from "./schemas/recordingSchemas";
 import { IntentSummarizer } from "./IntentSummarizer"; // Story 1.12
+import { PatternRecognizer } from "./PatternRecognizer"; // Story 1.14
+import { NotificationManager } from "./NotificationManager"; // Story 1.9
 
 /**
  * Pattern type
@@ -159,6 +161,7 @@ export class PatternManager {
   private static instance: PatternManager | null = null;
   private db: Database.Database | null = null;
   private intentSummarizer: IntentSummarizer | null = null; // Story 1.12
+  private notificationManager: NotificationManager | null = null; // Story 1.9
   private recentCopyEvents: CopyEventData[] = []; // Story 1.7b
   private copyEventCleanupInterval: NodeJS.Timeout | null = null; // Story 1.7b
 
@@ -189,6 +192,9 @@ export class PatternManager {
 
       // Initialize IntentSummarizer (Story 1.12)
       this.intentSummarizer = IntentSummarizer.getInstance(this.db);
+
+      // Initialize NotificationManager (Story 1.9)
+      this.notificationManager = NotificationManager.getInstance();
 
       // Run cleanup on startup
       await this.cleanupOldPatterns();
@@ -249,7 +255,7 @@ export class PatternManager {
 
   /**
    * Get all patterns (optionally filtered)
-   * Database integration will be implemented in Story 1.8
+   * Story 1.14: Implemented database query for pattern retrieval
    */
   public async getAllPatterns(
     filters?: PatternGetAllInput,
@@ -264,8 +270,38 @@ export class PatternManager {
         filters ? JSON.stringify(filters) : "none",
       );
 
-      // Placeholder: Database query will be implemented in Story 1.8
-      const patterns: Pattern[] = [];
+      // Build query with optional filters
+      let query = `
+        SELECT id, type, pattern_data, confidence, created_at
+        FROM patterns
+        WHERE 1=1
+      `;
+      const params: unknown[] = [];
+
+      if (filters?.type) {
+        query += " AND type = ?";
+        params.push(filters.type);
+      }
+
+      // Order by most recently seen patterns first
+      query += " ORDER BY last_seen DESC";
+
+      const stmt = this.db.prepare(query);
+      const rows = stmt.all(...params) as Array<{
+        id: string;
+        type: string;
+        pattern_data: string;
+        confidence: number;
+        created_at: number;
+      }>;
+
+      const patterns: Pattern[] = rows.map((row) => ({
+        id: row.id,
+        type: row.type as PatternType,
+        pattern_data: row.pattern_data,
+        confidence: row.confidence,
+        created_at: row.created_at,
+      }));
 
       log.info("[PatternManager] Retrieved patterns, count:", patterns.length);
 
@@ -750,34 +786,75 @@ export class PatternManager {
         const existingPattern: NavigationPattern = JSON.parse(
           lastPattern.pattern_data,
         );
-        existingPattern.sequence.push({
-          url: event.url,
-          timestamp: event.timestamp,
-          tabId: event.tabId,
-          pageTitle: event.pageTitle, // Enhanced context (Story 1.12)
-        });
 
-        const updateStmt = this.db.prepare(`
-          UPDATE patterns
-          SET pattern_data = ?, last_seen = ?
-          WHERE id = ?
-        `);
+        // Deduplicate consecutive URLs (Story 1.14 - Bug fix)
+        // Only add if different from last URL in sequence
+        const lastUrl =
+          existingPattern.sequence[existingPattern.sequence.length - 1]?.url;
+        const isDuplicate = lastUrl === event.url;
 
-        updateStmt.run(
-          JSON.stringify(existingPattern),
-          event.timestamp,
-          lastPattern.id,
-        );
+        if (!isDuplicate) {
+          existingPattern.sequence.push({
+            url: event.url,
+            timestamp: event.timestamp,
+            tabId: event.tabId,
+            pageTitle: event.pageTitle, // Enhanced context (Story 1.12)
+          });
 
-        log.info("[PatternManager] Navigation appended to session:", {
-          patternId: lastPattern.id,
-          sequenceLength: existingPattern.sequence.length,
-          url: event.url,
-        });
+          const updateStmt = this.db.prepare(`
+            UPDATE patterns
+            SET pattern_data = ?, last_seen = ?
+            WHERE id = ?
+          `);
+
+          updateStmt.run(
+            JSON.stringify(existingPattern),
+            event.timestamp,
+            lastPattern.id,
+          );
+
+          log.info("[PatternManager] Navigation appended to session:", {
+            patternId: lastPattern.id,
+            sequenceLength: existingPattern.sequence.length,
+            url: event.url,
+          });
+        } else {
+          // Update last_seen even for duplicates (keeps session active)
+          const updateLastSeenStmt = this.db.prepare(`
+            UPDATE patterns SET last_seen = ? WHERE id = ?
+          `);
+          updateLastSeenStmt.run(event.timestamp, lastPattern.id);
+
+          log.info(
+            "[PatternManager] Duplicate URL skipped (keeping session active):",
+            {
+              patternId: lastPattern.id,
+              url: event.url,
+            },
+          );
+        }
       }
 
       // Run cleanup if needed (lightweight check)
       await this.cleanupOldPatterns();
+
+      // Track session action for mid-workflow detection (Story 1.14)
+      try {
+        const recognizer = PatternRecognizer.getInstance();
+        recognizer.trackSessionAction("navigation", {
+          url: event.url,
+          tabId: event.tabId,
+          timestamp: event.timestamp,
+        });
+
+        // Check if we should trigger a mid-workflow suggestion
+        await recognizer.detectMidWorkflowPattern();
+      } catch (error) {
+        log.warn(
+          "[PatternManager] Mid-workflow tracking failed (non-critical):",
+          error,
+        );
+      }
 
       return { success: true };
     } catch (error) {
@@ -904,7 +981,31 @@ export class PatternManager {
               fieldCount: data.fields.length,
             },
           );
-          // TODO: Trigger notification system (Story 1.9)
+
+          // Create notification through NotificationManager (Story 1.9)
+          if (this.notificationManager) {
+            const notification =
+              await this.notificationManager.createNotification({
+                type: "pattern",
+                severity: "info",
+                title: "Form pattern detected",
+                message: `You've filled out a form on ${data.domain} with ${data.fields.length} fields ${newOccurrenceCount} times`,
+                data: {
+                  id: matchingPattern.id, // Must match PatternRecognizer format for SidebarApp.tsx
+                  type: "form" as const,
+                  confidence: newConfidence,
+                  occurrenceCount: newOccurrenceCount,
+                  patternData: JSON.parse(matchingPattern.pattern_data),
+                },
+              });
+
+            if (notification) {
+              log.info(
+                "[PatternManager] Form notification created",
+                notification.id,
+              );
+            }
+          }
         }
       } else {
         // Create new form pattern
@@ -940,6 +1041,24 @@ export class PatternManager {
 
       // Run cleanup if needed
       await this.cleanupOldPatterns();
+
+      // Track session action for mid-workflow detection (Story 1.14)
+      try {
+        const recognizer = PatternRecognizer.getInstance();
+        recognizer.trackSessionAction("form", {
+          domain: data.domain,
+          formSelector: data.formSelector,
+          timestamp: data.timestamp,
+        });
+
+        // Check if we should trigger a mid-workflow suggestion
+        await recognizer.detectMidWorkflowPattern();
+      } catch (error) {
+        log.warn(
+          "[PatternManager] Mid-workflow tracking failed (non-critical):",
+          error,
+        );
+      }
 
       return { success: true };
     } catch (error) {
@@ -1291,6 +1410,23 @@ export class PatternManager {
           timeGap: `${(timeGap / 1000).toFixed(1)}s`,
         });
 
+        // Track session action for mid-workflow detection (Story 1.14)
+        try {
+          const recognizer = PatternRecognizer.getInstance();
+          recognizer.trackSessionAction("copy-paste", {
+            sourceUrl: pair.sourceUrl,
+            destinationUrl: pair.destinationUrl,
+            sourceElement: pair.sourceElement,
+            destinationElement: pair.destinationElement,
+            timestamp,
+          });
+        } catch (error) {
+          log.error(
+            "[PatternManager] Failed to track copy-paste session action:",
+            error,
+          );
+        }
+
         // Generate pattern hash for matching (source URL + destination URL + element selectors)
         const patternHash = `${recentCopy.url}::${url}::${recentCopy.sourceElement}::${destinationElement}`;
 
@@ -1382,7 +1518,33 @@ export class PatternManager {
                 destinationUrl: pair.destinationUrl,
               },
             );
-            // TODO: Trigger notification system (Story 1.9)
+
+            // Create notification through NotificationManager (Story 1.9)
+            if (this.notificationManager) {
+              const sourceHostname = new URL(pair.sourceUrl).hostname;
+              const destHostname = new URL(pair.destinationUrl).hostname;
+              const notification =
+                await this.notificationManager.createNotification({
+                  type: "pattern",
+                  severity: "info",
+                  title: "Copy-paste pattern detected",
+                  message: `You've copied from ${sourceHostname} to ${destHostname} ${newOccurrenceCount} times`,
+                  data: {
+                    id: matchingPattern.id, // Must match PatternRecognizer format for SidebarApp.tsx
+                    type: "copy-paste" as const,
+                    confidence: newConfidence,
+                    occurrenceCount: newOccurrenceCount,
+                    patternData: JSON.parse(matchingPattern.pattern_data),
+                  },
+                });
+
+              if (notification) {
+                log.info(
+                  "[PatternManager] Copy-paste notification created",
+                  notification.id,
+                );
+              }
+            }
           }
         } else {
           // Create new copy-paste pattern

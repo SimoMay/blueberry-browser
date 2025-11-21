@@ -20,6 +20,10 @@ import {
   StartRecordingSchema,
   SaveRecordingSchema,
 } from "./schemas/recordingSchemas";
+import {
+  StartContinuationSchema,
+  CancelExecutionSchema,
+} from "./schemas/patternSchemas";
 import { MonitorManager } from "./MonitorManager";
 import {
   MonitorCreateSchema,
@@ -783,6 +787,125 @@ export class EventManager {
 
         // Call PatternManager
         return await patternManager.trackCopyPaste(validated);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Story 1.14: Start pattern continuation (proactive suggestion)
+    ipcMain.handle("pattern:start-continuation", async (_, data) => {
+      try {
+        // Rate limiting (10 requests/second)
+        if (!this.checkRateLimit("pattern:start-continuation", 10)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = StartContinuationSchema.parse(data);
+
+        // Get pattern data from PatternManager
+        const patternResult = await patternManager.getAllPatterns();
+        if (!patternResult.success || !patternResult.data) {
+          return {
+            success: false,
+            error: {
+              code: "PATTERN_NOT_FOUND",
+              message: "Pattern not found",
+            },
+          };
+        }
+
+        const pattern = patternResult.data.find(
+          (p) => p.id === validated.patternId,
+        );
+        if (!pattern) {
+          return {
+            success: false,
+            error: {
+              code: "PATTERN_NOT_FOUND",
+              message: "Pattern not found",
+            },
+          };
+        }
+
+        // Execute with progress tracking via AutomationExecutor
+        const patternData = JSON.parse(pattern.pattern_data);
+        const executor = this.mainWindow.automationExecutor;
+
+        const executionId = await executor.executeWithProgress(
+          validated.patternId,
+          pattern.type as "navigation" | "form",
+          patternData,
+          validated.itemCount,
+        );
+
+        return {
+          success: true,
+          data: { executionId },
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: error.issues[0].message,
+            },
+          };
+        }
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Story 1.14: Cancel execution
+    ipcMain.handle("pattern:cancel-execution", async (_, data) => {
+      try {
+        // Rate limiting (10 requests/second)
+        if (!this.checkRateLimit("pattern:cancel-execution", 10)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Zod validation
+        const validated = CancelExecutionSchema.parse(data);
+
+        // Call AutomationExecutor to cancel
+        const executor = this.mainWindow.automationExecutor;
+        await executor.cancelExecution(validated.executionId);
+
+        return { success: true };
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {

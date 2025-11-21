@@ -1,5 +1,5 @@
 import log from "electron-log";
-import { Window } from "./Window";
+import type { Window } from "./Window";
 import { Tab } from "./Tab";
 
 /**
@@ -48,11 +48,24 @@ interface ExecutionResult {
 }
 
 /**
+ * Execution state tracking (Story 1.14)
+ */
+interface ExecutionState {
+  executionId: string;
+  cancelled: boolean;
+  currentStep: number;
+  totalSteps: number;
+  patternType: "navigation" | "form";
+}
+
+/**
  * AutomationExecutor handles pattern replay for saved automations.
  * Supports navigation sequences and form filling patterns.
+ * Story 1.14: Added cancellation and real-time progress tracking.
  */
 export class AutomationExecutor {
   private window: Window;
+  private executionStates: Map<string, ExecutionState> = new Map();
 
   constructor(window: Window) {
     this.window = window;
@@ -123,17 +136,19 @@ export class AutomationExecutor {
 
   /**
    * Execute navigation pattern (URL sequence replay)
+   * @param existingTab Optional tab to reuse (for multi-iteration execution)
    */
   private async executeNavigation(
     _automationId: string,
     pattern: NavigationPattern,
     onProgress?: ProgressCallback,
-  ): Promise<{ success: boolean; stepsExecuted: number }> {
+    existingTab?: Tab | null,
+  ): Promise<{ success: boolean; stepsExecuted: number; tab?: Tab }> {
     const totalSteps = pattern.sequence.length;
-    let tab: Tab | null = null;
+    let tab: Tab | null = existingTab || null;
 
     log.info(
-      `[AutomationExecutor] Executing navigation pattern: ${totalSteps} steps`,
+      `[AutomationExecutor] Executing navigation pattern: ${totalSteps} steps${existingTab ? " (reusing tab)" : ""}`,
     );
 
     for (let i = 0; i < totalSteps; i++) {
@@ -151,15 +166,13 @@ export class AutomationExecutor {
           onProgress(stepNum, totalSteps, `Navigating to ${hostname}...`);
         }
 
-        // Create tab on first step, reuse for subsequent steps
-        if (i === 0) {
+        // Create tab on first step if no existing tab, reuse for subsequent steps
+        if (!tab) {
           tab = this.window.createTab(step.url);
           // Enable automation mode to skip pattern tracking and show overlay
           tab.setAutomationMode(true);
-        } else if (tab) {
-          await tab.loadURL(step.url);
         } else {
-          throw new Error("Tab is null, cannot navigate");
+          await tab.loadURL(step.url);
         }
 
         // Wait 1 second between navigations (as per AC-4)
@@ -184,12 +197,9 @@ export class AutomationExecutor {
       }
     }
 
-    // Disable automation mode after successful completion
-    if (tab) {
-      tab.setAutomationMode(false);
-    }
-
-    return { success: true, stepsExecuted: totalSteps };
+    // Return tab for reuse, but don't disable automation mode yet
+    // (will be disabled after all iterations complete)
+    return { success: true, stepsExecuted: totalSteps, tab: tab || undefined };
   }
 
   /**
@@ -344,5 +354,279 @@ export class AutomationExecutor {
    */
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Cancel an ongoing execution (Story 1.14)
+   * @param executionId Execution ID to cancel
+   */
+  async cancelExecution(executionId: string): Promise<void> {
+    try {
+      const state = this.executionStates.get(executionId);
+      if (!state) {
+        log.warn(`[AutomationExecutor] No execution found: ${executionId}`);
+        return;
+      }
+
+      // Mark as cancelled
+      state.cancelled = true;
+      this.executionStates.set(executionId, state);
+
+      log.info(
+        `[AutomationExecutor] Execution ${executionId} cancelled at step ${state.currentStep}/${state.totalSteps}`,
+      );
+
+      // Emit cancellation event to sidebar
+      this.window.sidebar.view.webContents.send(
+        "automation:execution-cancelled",
+        {
+          executionId,
+          stoppedAt: state.currentStep,
+          totalSteps: state.totalSteps,
+        },
+      );
+
+      // Cleanup state (will be removed when execution completes naturally)
+    } catch (error) {
+      log.error("[AutomationExecutor] Cancel execution error:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Extract one iteration of a navigation pattern by detecting pattern repetition
+   * Finds when the sequence returns to the starting domain after visiting other domains
+   */
+  private extractOneIteration(pattern: NavigationPattern): Array<{
+    url: string;
+    timestamp: number;
+    tabId: string;
+  }> {
+    if (pattern.sequence.length === 0) {
+      return [];
+    }
+
+    // If only 1 URL, that's the iteration
+    if (pattern.sequence.length === 1) {
+      return [pattern.sequence[0]];
+    }
+
+    const iteration = [pattern.sequence[0]];
+
+    try {
+      // Extract starting domain
+      const startingDomain = new URL(pattern.sequence[0].url).hostname;
+      let visitedDifferentDomain = false;
+
+      // Continue adding URLs until we return to the starting domain (after visiting elsewhere)
+      for (let i = 1; i < pattern.sequence.length; i++) {
+        const currentUrl = pattern.sequence[i].url;
+        const currentDomain = new URL(currentUrl).hostname;
+
+        // Track if we've left the starting domain
+        if (currentDomain !== startingDomain) {
+          visitedDifferentDomain = true;
+        }
+
+        iteration.push(pattern.sequence[i]);
+
+        // Only consider it a "return" if we've been somewhere else first
+        if (
+          currentDomain === startingDomain &&
+          visitedDifferentDomain &&
+          i > 0
+        ) {
+          break;
+        }
+      }
+
+      log.info(
+        `[AutomationExecutor] Extracted one iteration: ${iteration.length} steps from ${pattern.sequence.length} total recorded steps (returning to ${startingDomain})`,
+      );
+    } catch (error) {
+      log.error("[AutomationExecutor] Error extracting iteration:", error);
+      // Fallback: return first element if URL parsing fails
+      return [pattern.sequence[0]];
+    }
+
+    return iteration;
+  }
+
+  /**
+   * Execute automation with real-time progress tracking (Story 1.14)
+   * Used for proactive suggestions (mid-workflow continuation)
+   * @param patternId Pattern ID to execute
+   * @param patternType Pattern type (navigation or form)
+   * @param patternData Pattern data structure
+   * @param itemCount Number of times to repeat the pattern
+   * @returns Execution ID for tracking
+   */
+  async executeWithProgress(
+    patternId: string,
+    patternType: "navigation" | "form",
+    patternData: NavigationPattern | FormPattern,
+    itemCount: number,
+  ): Promise<string> {
+    const executionId = `execution-${Date.now()}`;
+
+    try {
+      // Extract one iteration for navigation patterns (not the full recorded history)
+      let navigationIteration: NavigationPattern | undefined;
+
+      if (patternType === "navigation") {
+        const fullPattern = patternData as NavigationPattern;
+        const iteration = this.extractOneIteration(fullPattern);
+
+        // Create a new NavigationPattern with just one iteration
+        navigationIteration = {
+          sequence: iteration,
+          sessionGap: fullPattern.sessionGap,
+        };
+      }
+
+      // Initialize execution state
+      const totalSteps =
+        patternType === "navigation"
+          ? navigationIteration!.sequence.length * itemCount
+          : (patternData as FormPattern).fields.length * itemCount;
+
+      const state: ExecutionState = {
+        executionId,
+        cancelled: false,
+        currentStep: 0,
+        totalSteps,
+        patternType,
+      };
+
+      this.executionStates.set(executionId, state);
+
+      log.info(
+        `[AutomationExecutor] Starting execution ${executionId}: ${patternType} pattern, ${itemCount} iterations, ${totalSteps} total steps`,
+      );
+
+      // Execute pattern multiple times (reusing same tab for navigation patterns)
+      let reusableTab: Tab | null = null;
+
+      for (let iteration = 0; iteration < itemCount; iteration++) {
+        // Check for cancellation before each iteration
+        const currentState = this.executionStates.get(executionId);
+        if (currentState?.cancelled) {
+          log.info(
+            `[AutomationExecutor] Execution ${executionId} cancelled at iteration ${iteration + 1}/${itemCount}`,
+          );
+          // Disable automation mode on tab before cleanup
+          if (reusableTab) {
+            reusableTab.setAutomationMode(false);
+          }
+          this.executionStates.delete(executionId);
+          return executionId;
+        }
+
+        // Progress callback for this iteration
+        const onProgress = (
+          step: number,
+          _total: number,
+          description: string,
+        ): void => {
+          const globalStep =
+            iteration *
+              (patternType === "navigation"
+                ? navigationIteration!.sequence.length
+                : (patternData as FormPattern).fields.length) +
+            step;
+
+          // Update state
+          const state = this.executionStates.get(executionId);
+          if (state) {
+            state.currentStep = globalStep;
+            this.executionStates.set(executionId, state);
+          }
+
+          // Emit progress event to sidebar
+          this.window.sidebar.view.webContents.send("execution:progress", {
+            executionId,
+            current: globalStep,
+            total: totalSteps,
+            action: description,
+            iteration: iteration + 1,
+            totalIterations: itemCount,
+          });
+        };
+
+        // Execute single iteration (reusing tab for navigation patterns)
+        if (patternType === "navigation") {
+          const result = await this.executeNavigation(
+            patternId,
+            navigationIteration!,
+            onProgress,
+            reusableTab,
+          );
+          // Store tab for reuse in next iteration
+          if (result.tab) {
+            reusableTab = result.tab;
+          }
+        } else {
+          // Form patterns create new tab each time (as per original design)
+          await this.execute(patternId, patternType, patternData, onProgress);
+        }
+
+        // Small delay between iterations
+        if (iteration < itemCount - 1) {
+          await this.delay(500);
+        }
+      }
+
+      // Disable automation mode after all iterations complete
+      if (reusableTab) {
+        reusableTab.setAutomationMode(false);
+      }
+
+      // Emit completion event with pattern context (Story 1.14 - enhanced UX)
+      const patternContext =
+        patternType === "navigation"
+          ? {
+              type: "navigation" as const,
+              urlCount: navigationIteration!.sequence.length,
+              firstUrl: navigationIteration!.sequence[0]?.url,
+              lastUrl:
+                navigationIteration!.sequence[
+                  navigationIteration!.sequence.length - 1
+                ]?.url,
+            }
+          : {
+              type: "form" as const,
+              domain: (patternData as FormPattern).domain,
+              fieldCount: (patternData as FormPattern).fields.length,
+            };
+
+      this.window.sidebar.view.webContents.send("execution:complete", {
+        executionId,
+        itemsProcessed: itemCount,
+        stepsExecuted: totalSteps,
+        patternContext,
+      });
+
+      log.info(
+        `[AutomationExecutor] Execution ${executionId} completed: ${itemCount} iterations, ${totalSteps} steps`,
+      );
+
+      // Cleanup state
+      this.executionStates.delete(executionId);
+
+      return executionId;
+    } catch (error) {
+      log.error("[AutomationExecutor] Execution error:", error);
+
+      // Emit error event
+      this.window.sidebar.view.webContents.send("execution:error", {
+        executionId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      // Cleanup state
+      this.executionStates.delete(executionId);
+
+      throw error;
+    }
   }
 }

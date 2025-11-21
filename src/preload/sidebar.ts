@@ -149,6 +149,87 @@ const sidebarAPI = {
     removeDetectedListener: () => {
       electronAPI.ipcRenderer.removeAllListeners("pattern:detected");
     },
+
+    // Story 1.14: Proactive Automation Suggestions
+    startContinuation: (data: { patternId: string; itemCount: number }) =>
+      electronAPI.ipcRenderer.invoke("pattern:start-continuation", data),
+
+    cancelExecution: (data: { executionId: string }) =>
+      electronAPI.ipcRenderer.invoke("pattern:cancel-execution", data),
+
+    onSuggestContinuation: (
+      callback: (data: {
+        patternId: string;
+        intentSummary: string;
+        estimatedItems: number;
+        matchCount: number;
+      }) => void,
+    ) => {
+      electronAPI.ipcRenderer.on("pattern:suggest-continuation", (_, data) =>
+        callback(data),
+      );
+    },
+
+    removeSuggestContinuationListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners(
+        "pattern:suggest-continuation",
+      );
+    },
+
+    onExecutionProgress: (
+      callback: (data: {
+        executionId: string;
+        current: number;
+        total: number;
+        action: string;
+      }) => void,
+    ) => {
+      electronAPI.ipcRenderer.on("execution:progress", (_, data) =>
+        callback(data),
+      );
+    },
+
+    removeExecutionProgressListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("execution:progress");
+    },
+
+    onExecutionComplete: (
+      callback: (data: { executionId: string; itemsProcessed: number }) => void,
+    ) => {
+      electronAPI.ipcRenderer.on("execution:complete", (_, data) =>
+        callback(data),
+      );
+    },
+
+    removeExecutionCompleteListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("execution:complete");
+    },
+
+    onExecutionCancelled: (
+      callback: (data: { executionId: string; stoppedAt: number }) => void,
+    ) => {
+      electronAPI.ipcRenderer.on("automation:execution-cancelled", (_, data) =>
+        callback(data),
+      );
+    },
+
+    removeExecutionCancelledListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners(
+        "automation:execution-cancelled",
+      );
+    },
+
+    onExecutionError: (
+      callback: (data: { executionId: string; error: string }) => void,
+    ) => {
+      electronAPI.ipcRenderer.on("execution:error", (_, data) =>
+        callback(data),
+      );
+    },
+
+    removeExecutionErrorListener: () => {
+      electronAPI.ipcRenderer.removeAllListeners("execution:error");
+    },
   },
 
   // Automation execution and management (Story 1.10)

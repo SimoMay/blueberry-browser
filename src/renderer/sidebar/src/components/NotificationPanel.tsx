@@ -280,11 +280,6 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
                         <div className="flex items-start justify-between gap-2">
                           <h4 className="text-sm font-medium text-gray-900 dark:text-white">
                             {notification.title}
-                            {isPattern && (
-                              <span className="ml-2 text-xs text-blue-500">
-                                (Click to interact)
-                              </span>
-                            )}
                           </h4>
 
                           {/* Dismiss button */}

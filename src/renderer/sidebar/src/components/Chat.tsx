@@ -8,6 +8,8 @@ import { cn } from "@common/lib/utils";
 import { Button } from "@common/components/Button";
 import { PatternActionMessage } from "./PatternActionMessage";
 import { AIPatternMessage } from "./AIPatternMessage";
+import { ProactiveSuggestion } from "./ProactiveSuggestion";
+import { ProgressMessage } from "./ProgressMessage";
 
 interface PatternData {
   notificationId: string;
@@ -429,6 +431,30 @@ export const Chat: React.FC<ChatProps> = ({
   // Track which pattern notifications we've already created messages for
   const processedPatternNotifications = useRef<Set<string>>(new Set());
 
+  // Story 1.14: Proactive Automation Suggestion State
+  const [proactiveSuggestion, setProactiveSuggestion] = useState<{
+    patternId: string;
+    intentSummary: string;
+    estimatedItems: number;
+    matchCount: number;
+  } | null>(null);
+
+  // Debug: Log state changes
+  useEffect(() => {
+    console.log(
+      "[Chat] proactiveSuggestion state updated:",
+      proactiveSuggestion,
+    );
+  }, [proactiveSuggestion]);
+
+  // Story 1.14: Execution Progress State
+  const [executionProgress, setExecutionProgress] = useState<{
+    executionId: string;
+    current: number;
+    total: number;
+    action: string;
+  } | null>(null);
+
   // Combine chat messages and pattern messages
   const messages = [...chatMessages, ...patternMessages].sort(
     (a, b) => a.timestamp - b.timestamp,
@@ -504,6 +530,147 @@ export const Chat: React.FC<ChatProps> = ({
       onPatternProcessed();
     }
   }, [pendingPatternData, onPatternProcessed]);
+
+  // Story 1.14: Listen for proactive automation suggestions
+  useEffect(() => {
+    const handleSuggestContinuation = (data: {
+      patternId: string;
+      intentSummary: string;
+      estimatedItems: number;
+      matchCount: number;
+    }): void => {
+      console.log("[Chat] Received suggest-continuation event:", data);
+      setProactiveSuggestion(data);
+    };
+
+    console.log("[Chat] Setting up suggest-continuation listener");
+    window.sidebarAPI.pattern.onSuggestContinuation(handleSuggestContinuation);
+
+    return () => {
+      console.log("[Chat] Removing suggest-continuation listener");
+      window.sidebarAPI.pattern.removeSuggestContinuationListener();
+    };
+  }, []);
+
+  // Story 1.14: Listen for execution progress updates
+  useEffect(() => {
+    const handleExecutionProgress = (data: {
+      executionId: string;
+      current: number;
+      total: number;
+      action: string;
+    }): void => {
+      setExecutionProgress(data);
+    };
+
+    const handleExecutionComplete = (data: {
+      executionId: string;
+      itemsProcessed: number;
+      stepsExecuted?: number;
+      patternContext?: {
+        type: "navigation" | "form";
+        urlCount?: number;
+        firstUrl?: string;
+        lastUrl?: string;
+        domain?: string;
+        fieldCount?: number;
+      };
+    }): void => {
+      // Clear progress state
+      setExecutionProgress(null);
+
+      // Generate contextual completion message (Story 1.14 - AC 5 enhanced)
+      let content = `✅ Done! Completed ${data.itemsProcessed} iteration${data.itemsProcessed > 1 ? "s" : ""} successfully`;
+
+      if (data.patternContext) {
+        if (data.patternContext.type === "navigation") {
+          const urlCount = data.patternContext.urlCount || 0;
+          try {
+            const firstUrl = data.patternContext.firstUrl
+              ? new URL(data.patternContext.firstUrl).hostname
+              : "pages";
+            const lastUrl = data.patternContext.lastUrl
+              ? new URL(data.patternContext.lastUrl).hostname
+              : undefined;
+
+            if (urlCount === 1) {
+              content += ` — visited ${firstUrl}`;
+            } else if (urlCount === 2) {
+              content += ` — navigated between ${firstUrl} and ${lastUrl || "another page"}`;
+            } else {
+              content += ` — automated ${urlCount}-step navigation workflow`;
+            }
+          } catch {
+            content += ` — automated navigation workflow`;
+          }
+        } else if (data.patternContext.type === "form") {
+          const domain = data.patternContext.domain || "form";
+          const fieldCount = data.patternContext.fieldCount || 0;
+          content += ` — filled ${fieldCount} field${fieldCount > 1 ? "s" : ""} on ${domain}`;
+        }
+      }
+
+      if (data.stepsExecuted) {
+        content += `. Total steps: ${data.stepsExecuted}.`;
+      } else {
+        content += ".";
+      }
+
+      const completionMessage: Message = {
+        id: `execution-complete-${Date.now()}`,
+        role: "assistant",
+        content,
+        timestamp: Date.now(),
+      };
+      setPatternMessages((prev) => [...prev, completionMessage]);
+    };
+
+    const handleExecutionCancelled = (data: {
+      executionId: string;
+      stoppedAt: number;
+    }): void => {
+      // Clear progress state
+      setExecutionProgress(null);
+
+      // Add cancellation message to chat
+      const cancellationMessage: Message = {
+        id: `execution-cancelled-${Date.now()}`,
+        role: "assistant",
+        content: `⏹️ Execution cancelled. Stopped at step ${data.stoppedAt}.`,
+        timestamp: Date.now(),
+      };
+      setPatternMessages((prev) => [...prev, cancellationMessage]);
+    };
+
+    const handleExecutionError = (data: {
+      executionId: string;
+      error: string;
+    }): void => {
+      // Clear progress state
+      setExecutionProgress(null);
+
+      // Add error message to chat
+      const errorMessage: Message = {
+        id: `execution-error-${Date.now()}`,
+        role: "assistant",
+        content: `❌ Execution failed: ${data.error}`,
+        timestamp: Date.now(),
+      };
+      setPatternMessages((prev) => [...prev, errorMessage]);
+    };
+
+    window.sidebarAPI.pattern.onExecutionProgress(handleExecutionProgress);
+    window.sidebarAPI.pattern.onExecutionComplete(handleExecutionComplete);
+    window.sidebarAPI.pattern.onExecutionCancelled(handleExecutionCancelled);
+    window.sidebarAPI.pattern.onExecutionError(handleExecutionError);
+
+    return () => {
+      window.sidebarAPI.pattern.removeExecutionProgressListener();
+      window.sidebarAPI.pattern.removeExecutionCompleteListener();
+      window.sidebarAPI.pattern.removeExecutionCancelledListener();
+      window.sidebarAPI.pattern.removeExecutionErrorListener();
+    };
+  }, []);
 
   // Group messages into conversation turns
   const conversationTurns: ConversationTurn[] = [];
@@ -595,6 +762,65 @@ export const Chat: React.FC<ChatProps> = ({
                 />
               ))}
             </>
+          )}
+
+          {/* Story 1.14: Proactive Automation Suggestion (AC 2, 3, 6) */}
+          {/* NOTE: Moved outside messages conditional to show even with empty chat */}
+          {proactiveSuggestion && (
+            <>
+              {(() => {
+                console.log(
+                  "[Chat] Rendering ProactiveSuggestion component",
+                  proactiveSuggestion,
+                );
+                return null;
+              })()}
+              <div className="pt-12">
+                <ProactiveSuggestion
+                  patternId={proactiveSuggestion.patternId}
+                  intentSummary={proactiveSuggestion.intentSummary}
+                  estimatedItems={proactiveSuggestion.estimatedItems}
+                  matchCount={proactiveSuggestion.matchCount}
+                  onDismiss={() => setProactiveSuggestion(null)}
+                  onStarted={() => {
+                    // Add starting message to chat
+                    const startMessage: Message = {
+                      id: `execution-start-${Date.now()}`,
+                      role: "assistant",
+                      content: `🚀 Starting automation... I'll keep you posted on the progress.`,
+                      timestamp: Date.now(),
+                    };
+                    setPatternMessages((prev) => [...prev, startMessage]);
+                    setProactiveSuggestion(null);
+                  }}
+                  onError={handlePatternError}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Story 1.14: Execution Progress Message (AC 3, 4) */}
+          {/* NOTE: Moved outside messages conditional to show even with empty chat */}
+          {executionProgress && (
+            <div className="pt-12">
+              <ProgressMessage
+                executionId={executionProgress.executionId}
+                current={executionProgress.current}
+                total={executionProgress.total}
+                currentAction={executionProgress.action}
+                onCancel={() => {
+                  // Add cancellation confirmation to chat
+                  const cancelMessage: Message = {
+                    id: `execution-cancelling-${Date.now()}`,
+                    role: "assistant",
+                    content: `Cancelling automation...`,
+                    timestamp: Date.now(),
+                  };
+                  setPatternMessages((prev) => [...prev, cancelMessage]);
+                }}
+                onError={handlePatternError}
+              />
+            </div>
           )}
 
           {/* Scroll anchor */}

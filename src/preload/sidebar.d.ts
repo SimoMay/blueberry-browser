@@ -160,6 +160,45 @@ interface SidebarAPI {
     dismiss: (data: { patternId: string }) => Promise<PatternAPIResponse>;
     onDetected: (callback: (pattern: Pattern) => void) => void;
     removeDetectedListener: () => void;
+
+    // Story 1.14: Proactive Automation Suggestions
+    startContinuation: (data: {
+      patternId: string;
+      itemCount: number;
+    }) => Promise<PatternAPIResponse<{ executionId: string }>>;
+    cancelExecution: (data: {
+      executionId: string;
+    }) => Promise<PatternAPIResponse>;
+    onSuggestContinuation: (
+      callback: (data: {
+        patternId: string;
+        intentSummary: string;
+        estimatedItems: number;
+        matchCount: number;
+      }) => void,
+    ) => void;
+    removeSuggestContinuationListener: () => void;
+    onExecutionProgress: (
+      callback: (data: {
+        executionId: string;
+        current: number;
+        total: number;
+        action: string;
+      }) => void,
+    ) => void;
+    removeExecutionProgressListener: () => void;
+    onExecutionComplete: (
+      callback: (data: { executionId: string; itemsProcessed: number }) => void,
+    ) => void;
+    removeExecutionCompleteListener: () => void;
+    onExecutionCancelled: (
+      callback: (data: { executionId: string; stoppedAt: number }) => void,
+    ) => void;
+    removeExecutionCancelledListener: () => void;
+    onExecutionError: (
+      callback: (data: { executionId: string; error: string }) => void,
+    ) => void;
+    removeExecutionErrorListener: () => void;
   };
 
   // Automation execution and management (Story 1.10)
