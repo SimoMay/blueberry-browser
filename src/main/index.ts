@@ -8,7 +8,6 @@ import { PreferencesStore } from "./store/PreferencesStore";
 import { NotificationManager } from "./NotificationManager";
 import { PatternManager } from "./PatternManager";
 import { MonitorManager } from "./MonitorManager";
-import { PatternRecognizer } from "./PatternRecognizer";
 import log from "electron-log";
 
 let mainWindow: Window | null = null;
@@ -18,7 +17,6 @@ let database: DatabaseManager | null = null;
 let notificationManager: NotificationManager | null = null;
 let patternManager: PatternManager | null = null;
 let monitorManager: MonitorManager | null = null;
-let patternRecognizer: PatternRecognizer | null = null;
 
 // Export database and preferences for use in other modules
 export let db: DatabaseManager | null = null;
@@ -28,16 +26,6 @@ const createWindow = (): Window => {
   const window = new Window();
   menu = new AppMenu(window);
   eventManager = new EventManager(window);
-
-  // Set NotificationManager, EventManager, and Window in PatternRecognizer (Story 1.9 + Story 1.14)
-  if (patternRecognizer && notificationManager && eventManager) {
-    patternRecognizer.setNotificationManager(notificationManager);
-    patternRecognizer.setEventManager(eventManager);
-    patternRecognizer.setWindow(window); // Story 1.14 - for mid-workflow suggestions
-    log.info(
-      "[App] NotificationManager, EventManager, and Window linked to PatternRecognizer",
-    );
-  }
 
   return window;
 };
@@ -71,11 +59,6 @@ app.whenReady().then(async () => {
     monitorManager = MonitorManager.getInstance();
     await monitorManager.initialize();
     log.info("[App] Monitor manager initialized successfully");
-
-    log.info("[App] Initializing pattern recognizer...");
-    patternRecognizer = PatternRecognizer.getInstance(database.getDatabase());
-    patternRecognizer.startBackgroundJob();
-    log.info("[App] Pattern recognizer initialized and background job started");
   } catch (error) {
     log.error("[App] Failed to initialize infrastructure:", error);
     // Continue anyway - UI can show error state
@@ -113,17 +96,6 @@ app.on("window-all-closed", () => {
 
 // Cleanup database and managers before app quits
 app.on("before-quit", async () => {
-  if (patternRecognizer) {
-    try {
-      log.info("[App] Stopping pattern recognizer background job...");
-      patternRecognizer.stopBackgroundJob();
-      patternRecognizer = null;
-      log.info("[App] Pattern recognizer stopped successfully");
-    } catch (error) {
-      log.error("[App] Failed to stop pattern recognizer:", error);
-    }
-  }
-
   if (notificationManager) {
     try {
       log.info("[App] Cleaning up notification manager...");

@@ -849,20 +849,14 @@ export class EventManager {
           };
         }
 
-        // Execute with progress tracking via AutomationExecutor
-        const patternData = JSON.parse(pattern.pattern_data);
-        const executor = this.mainWindow.automationExecutor;
-
-        const executionId = await executor.executeWithProgress(
-          validated.patternId,
-          pattern.type as "navigation" | "form",
-          patternData,
-          validated.itemCount,
-        );
-
+        // TODO: Story 1.16 - LLM-guided execution not implemented yet
+        // Temporary error response until Story 1.16 is complete
         return {
-          success: true,
-          data: { executionId },
+          success: false,
+          error: {
+            code: "NOT_IMPLEMENTED",
+            message: "LLM-guided execution will be implemented in Story 1.16",
+          },
         };
       } catch (error) {
         if (error instanceof z.ZodError) {
@@ -899,13 +893,17 @@ export class EventManager {
         }
 
         // Zod validation
-        const validated = CancelExecutionSchema.parse(data);
+        CancelExecutionSchema.parse(data);
 
-        // Call AutomationExecutor to cancel
-        const executor = this.mainWindow.automationExecutor;
-        await executor.cancelExecution(validated.executionId);
-
-        return { success: true };
+        // TODO: Story 1.16 - LLM-guided execution not implemented yet
+        // Temporary error response until Story 1.16 is complete
+        return {
+          success: false,
+          error: {
+            code: "NOT_IMPLEMENTED",
+            message: "LLM-guided execution will be implemented in Story 1.16",
+          },
+        };
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {

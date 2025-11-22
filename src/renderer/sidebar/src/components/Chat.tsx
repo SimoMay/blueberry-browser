@@ -8,8 +8,9 @@ import { cn } from "@common/lib/utils";
 import { Button } from "@common/components/Button";
 import { PatternActionMessage } from "./PatternActionMessage";
 import { AIPatternMessage } from "./AIPatternMessage";
-import { ProactiveSuggestion } from "./ProactiveSuggestion";
-import { ProgressMessage } from "./ProgressMessage";
+// TODO: Story 1.14/1.16 - Components not implemented yet
+// import { ProactiveSuggestion } from "./ProactiveSuggestion";
+// import { ProgressMessage } from "./ProgressMessage";
 
 interface PatternData {
   notificationId: string;
@@ -447,8 +448,9 @@ export const Chat: React.FC<ChatProps> = ({
     );
   }, [proactiveSuggestion]);
 
-  // Story 1.14: Execution Progress State
-  const [executionProgress, setExecutionProgress] = useState<{
+  // TODO: Story 1.14: Execution Progress State (temporarily unused)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_executionProgress, _setExecutionProgress] = useState<{
     executionId: string;
     current: number;
     total: number;
@@ -560,7 +562,7 @@ export const Chat: React.FC<ChatProps> = ({
       total: number;
       action: string;
     }): void => {
-      setExecutionProgress(data);
+      _setExecutionProgress(data);
     };
 
     const handleExecutionComplete = (data: {
@@ -577,7 +579,7 @@ export const Chat: React.FC<ChatProps> = ({
       };
     }): void => {
       // Clear progress state
-      setExecutionProgress(null);
+      _setExecutionProgress(null);
 
       // Generate contextual completion message (Story 1.14 - AC 5 enhanced)
       let content = `✅ Done! Completed ${data.itemsProcessed} iteration${data.itemsProcessed > 1 ? "s" : ""} successfully`;
@@ -630,7 +632,7 @@ export const Chat: React.FC<ChatProps> = ({
       stoppedAt: number;
     }): void => {
       // Clear progress state
-      setExecutionProgress(null);
+      _setExecutionProgress(null);
 
       // Add cancellation message to chat
       const cancellationMessage: Message = {
@@ -647,7 +649,7 @@ export const Chat: React.FC<ChatProps> = ({
       error: string;
     }): void => {
       // Clear progress state
-      setExecutionProgress(null);
+      _setExecutionProgress(null);
 
       // Add error message to chat
       const errorMessage: Message = {
@@ -766,7 +768,8 @@ export const Chat: React.FC<ChatProps> = ({
 
           {/* Story 1.14: Proactive Automation Suggestion (AC 2, 3, 6) */}
           {/* NOTE: Moved outside messages conditional to show even with empty chat */}
-          {proactiveSuggestion && (
+          {/* TODO: Story 1.14 - ProactiveSuggestion component not implemented yet */}
+          {/* {proactiveSuggestion && (
             <>
               {(() => {
                 console.log(
@@ -797,11 +800,10 @@ export const Chat: React.FC<ChatProps> = ({
                 />
               </div>
             </>
-          )}
+          )} */}
 
-          {/* Story 1.14: Execution Progress Message (AC 3, 4) */}
-          {/* NOTE: Moved outside messages conditional to show even with empty chat */}
-          {executionProgress && (
+          {/* TODO: Story 1.14/1.16 - ProgressMessage component not implemented yet */}
+          {/* {executionProgress && (
             <div className="pt-12">
               <ProgressMessage
                 executionId={executionProgress.executionId}
@@ -821,7 +823,7 @@ export const Chat: React.FC<ChatProps> = ({
                 onError={handlePatternError}
               />
             </div>
-          )}
+          )} */}
 
           {/* Scroll anchor */}
           <div ref={scrollRef} />
