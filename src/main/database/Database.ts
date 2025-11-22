@@ -630,6 +630,40 @@ export class DatabaseManager {
           CREATE INDEX idx_patterns_created_at ON patterns(created_at);
         `,
       },
+      {
+        version: 8,
+        up: `
+          -- Story 1.17: Conversational Workflow Refinement
+          -- Add workflow and intent_summary columns to automations table
+          ALTER TABLE automations ADD COLUMN workflow TEXT;
+          ALTER TABLE automations ADD COLUMN intent_summary TEXT;
+          ALTER TABLE automations ADD COLUMN updated_at INTEGER;
+        `,
+        down: `
+          -- Revert to v7 schema (remove workflow columns)
+          -- Note: SQLite doesn't support DROP COLUMN directly
+          CREATE TABLE automations_temp (
+            id TEXT PRIMARY KEY,
+            pattern_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            pattern_data TEXT NOT NULL,
+            execution_count INTEGER DEFAULT 0,
+            last_executed INTEGER,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (pattern_id) REFERENCES patterns(id) ON DELETE CASCADE
+          );
+
+          INSERT INTO automations_temp
+          SELECT id, pattern_id, name, description, pattern_data, execution_count, last_executed, created_at
+          FROM automations;
+
+          DROP TABLE automations;
+          ALTER TABLE automations_temp RENAME TO automations;
+
+          CREATE INDEX idx_automations_pattern ON automations(pattern_id);
+        `,
+      },
     ];
   }
 

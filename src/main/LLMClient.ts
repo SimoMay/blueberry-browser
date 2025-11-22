@@ -1,5 +1,10 @@
 import { WebContents } from "electron";
-import { streamText, type LanguageModel, type CoreMessage } from "ai";
+import {
+  streamText,
+  generateText,
+  type LanguageModel,
+  type CoreMessage,
+} from "ai";
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
@@ -51,6 +56,16 @@ export class LLMClient {
   // Set the window reference after construction to avoid circular dependencies
   setWindow(window: Window): void {
     this.window = window;
+  }
+
+  // Get the model instance for direct use with AI SDK functions
+  getModel(): LanguageModel {
+    if (!this.model) {
+      throw new Error(
+        "LLM model not initialized - check API key configuration",
+      );
+    }
+    return this.model;
   }
 
   private getProvider(): LLMProvider {
@@ -366,5 +381,41 @@ export class LLMClient {
       content: chunk.content,
       isComplete: chunk.isComplete,
     });
+  }
+
+  /**
+   * Complete text (non-streaming) for structured responses
+   * Used by WorkflowRefiner for parsing user responses
+   *
+   * @param prompt - The prompt to send to the LLM
+   * @param options - Generation options
+   * @returns The complete text response
+   */
+  async completeText(
+    prompt: string,
+    options?: {
+      temperature?: number;
+      jsonMode?: boolean;
+    },
+  ): Promise<string> {
+    if (!this.model) {
+      throw new Error("LLM model not initialized");
+    }
+
+    const messages: CoreMessage[] = [
+      {
+        role: "user",
+        content: prompt,
+      },
+    ];
+
+    const result = await generateText({
+      model: this.model,
+      messages,
+      temperature: options?.temperature ?? 0.7,
+      maxRetries: 3,
+    });
+
+    return result.text;
   }
 }

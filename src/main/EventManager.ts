@@ -6,6 +6,7 @@ import {
   GetNotificationsSchema,
 } from "./schemas/notificationSchemas";
 import { PatternManager } from "./PatternManager";
+import { WorkflowRefiner } from "./WorkflowRefiner";
 import {
   PatternTrackSchema,
   PatternGetAllSchema,
@@ -36,6 +37,7 @@ import { z } from "zod";
 export class EventManager {
   private mainWindow: Window;
   private rateLimiters: Map<string, number[]> = new Map();
+  private workflowRefiner: WorkflowRefiner | null = null;
 
   constructor(mainWindow: Window) {
     this.mainWindow = mainWindow;
@@ -60,6 +62,9 @@ export class EventManager {
 
     // Monitor events
     this.handleMonitorEvents();
+
+    // Workflow refinement events (Story 1.17)
+    this.handleWorkflowRefinementEvents();
 
     // Page content events
     this.handlePageContentEvents();
@@ -1082,6 +1087,203 @@ export class EventManager {
           success: false,
           error: {
             code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+  }
+
+  /**
+   * Handle workflow refinement events (Story 1.17)
+   */
+  private handleWorkflowRefinementEvents(): void {
+    const patternManager = PatternManager.getInstance();
+    const llmClient = this.mainWindow.sidebar.client;
+
+    // Initialize WorkflowRefiner lazily
+    const getWorkflowRefiner = (): WorkflowRefiner => {
+      if (!this.workflowRefiner) {
+        this.workflowRefiner = new WorkflowRefiner(llmClient, patternManager);
+      }
+      return this.workflowRefiner;
+    };
+
+    // Start refinement conversation
+    ipcMain.handle("workflow:start-refinement", async (_, automationId) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("workflow:start-refinement", 10)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Validation
+        if (!automationId || typeof automationId !== "string") {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Invalid automation ID",
+            },
+          };
+        }
+
+        const refiner = getWorkflowRefiner();
+        const result = await refiner.startRefinementConversation(automationId);
+
+        return {
+          success: true,
+          data: result,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "REFINEMENT_START_FAILED",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
+
+    // Send refinement message
+    ipcMain.handle(
+      "workflow:send-refinement-message",
+      async (_, conversationId, message) => {
+        try {
+          // Rate limiting
+          if (!this.checkRateLimit("workflow:send-refinement-message", 20)) {
+            return {
+              success: false,
+              error: {
+                code: "RATE_LIMIT",
+                message: "Too many requests",
+              },
+            };
+          }
+
+          // Validation
+          if (
+            !conversationId ||
+            typeof conversationId !== "string" ||
+            !message ||
+            typeof message !== "string"
+          ) {
+            return {
+              success: false,
+              error: {
+                code: "VALIDATION_ERROR",
+                message: "Invalid conversation ID or message",
+              },
+            };
+          }
+
+          const refiner = getWorkflowRefiner();
+          const result = await refiner.sendMessage(conversationId, message);
+
+          return {
+            success: true,
+            data: result,
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: {
+              code: "REFINEMENT_MESSAGE_FAILED",
+              message: error instanceof Error ? error.message : "Unknown error",
+            },
+          };
+        }
+      },
+    );
+
+    // Save refined workflow
+    ipcMain.handle(
+      "workflow:save-refined-workflow",
+      async (_, conversationId) => {
+        try {
+          // Rate limiting
+          if (!this.checkRateLimit("workflow:save-refined-workflow", 10)) {
+            return {
+              success: false,
+              error: {
+                code: "RATE_LIMIT",
+                message: "Too many requests",
+              },
+            };
+          }
+
+          // Validation
+          if (!conversationId || typeof conversationId !== "string") {
+            return {
+              success: false,
+              error: {
+                code: "VALIDATION_ERROR",
+                message: "Invalid conversation ID",
+              },
+            };
+          }
+
+          const refiner = getWorkflowRefiner();
+          await refiner.saveRefinedWorkflow(conversationId);
+
+          return {
+            success: true,
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: {
+              code: "SAVE_REFINEMENT_FAILED",
+              message: error instanceof Error ? error.message : "Unknown error",
+            },
+          };
+        }
+      },
+    );
+
+    // Reset conversation (Start Over)
+    ipcMain.handle("workflow:reset-refinement", async (_, conversationId) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("workflow:reset-refinement", 10)) {
+          return {
+            success: false,
+            error: {
+              code: "RATE_LIMIT",
+              message: "Too many requests",
+            },
+          };
+        }
+
+        // Validation
+        if (!conversationId || typeof conversationId !== "string") {
+          return {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Invalid conversation ID",
+            },
+          };
+        }
+
+        const refiner = getWorkflowRefiner();
+        refiner.resetConversation(conversationId);
+
+        return {
+          success: true,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "RESET_FAILED",
             message: error instanceof Error ? error.message : "Unknown error",
           },
         };

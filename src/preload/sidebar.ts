@@ -303,6 +303,31 @@ const sidebarAPI = {
     },
   },
 
+  // Workflow refinement (Story 1.17)
+  workflow: {
+    startRefinement: (automationId: string) =>
+      electronAPI.ipcRenderer.invoke("workflow:start-refinement", automationId),
+
+    sendMessage: (conversationId: string, message: string) =>
+      electronAPI.ipcRenderer.invoke(
+        "workflow:send-refinement-message",
+        conversationId,
+        message,
+      ),
+
+    saveRefined: (conversationId: string) =>
+      electronAPI.ipcRenderer.invoke(
+        "workflow:save-refined-workflow",
+        conversationId,
+      ),
+
+    reset: (conversationId: string) =>
+      electronAPI.ipcRenderer.invoke(
+        "workflow:reset-refinement",
+        conversationId,
+      ),
+  },
+
   // Monitor management functionality
   monitor: {
     create: (data: {

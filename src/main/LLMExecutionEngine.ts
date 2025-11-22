@@ -618,9 +618,9 @@ TASK: Decide the next action based on workflow INTENT and current page state.
 
 RESPOND IN JSON FORMAT (no markdown, pure JSON only):
 {
-  "nextAction": "click" | "type" | "navigate" | "wait" | "extract" | "complete",
+  "nextAction": "click" | "type" | "navigate" | "wait" | "extract" | "press" | "complete",
   "target": "CSS selector or URL (adapt to current page)",
-  "value": "text to type if needed" | null,
+  "value": "text to type OR key to press (e.g., 'Enter')" | null,
   "reasoning": "explain how this advances the workflow INTENT",
   "isComplete": boolean,
   "estimatedStepsRemaining": number | null
@@ -632,6 +632,7 @@ ACTION TYPES:
 - "navigate": Navigate to a specific URL
 - "wait": Wait for page to load/settle
 - "extract": Extract content from current page (system auto-extracts headings/titles visible in screenshot)
+- "press": Press a keyboard key (value = "Enter" to submit forms, "Escape" to close dialogs, "Tab" to move focus)
 - "complete": Workflow goal achieved, stop execution
 
 IMPORTANT FOR EXTRACT ACTION:
@@ -724,9 +725,93 @@ Return ONLY valid JSON, no markdown code blocks.`;
         await new Promise((resolve) => setTimeout(resolve, duration));
         break;
       }
+      case "press":
+        await this.executePress(step.target, step.value || "Enter", tab);
+        break;
       case "complete":
         // Do nothing, execution will stop
         break;
+    }
+  }
+
+  /**
+   * Execute press key action
+   * Presses a keyboard key (e.g., "Enter" to submit forms)
+   */
+  private async executePress(
+    target: string | null,
+    key: string,
+    tab: Tab,
+  ): Promise<void> {
+    try {
+      const result = await tab.webContents.executeJavaScript(`
+        (function() {
+          const key = ${JSON.stringify(key)};
+          const selector = ${JSON.stringify(target)};
+
+          try {
+            // If target specified, focus element first
+            if (selector) {
+              const element = document.querySelector(selector);
+              if (element) {
+                element.focus();
+              }
+            }
+
+            // Press the key on the focused element (or document if no target)
+            const targetElement = selector ? document.querySelector(selector) : document.activeElement || document.body;
+
+            if (!targetElement) {
+              return {
+                success: false,
+                error: 'No target element found'
+              };
+            }
+
+            // Dispatch keyboard events
+            const eventOptions = {
+              key: key,
+              code: key === 'Enter' ? 'Enter' : key,
+              keyCode: key === 'Enter' ? 13 : (key === 'Escape' ? 27 : (key === 'Tab' ? 9 : 0)),
+              which: key === 'Enter' ? 13 : (key === 'Escape' ? 27 : (key === 'Tab' ? 9 : 0)),
+              bubbles: true,
+              cancelable: true
+            };
+
+            targetElement.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
+            targetElement.dispatchEvent(new KeyboardEvent('keypress', eventOptions));
+            targetElement.dispatchEvent(new KeyboardEvent('keyup', eventOptions));
+
+            return { success: true, key, selector };
+          } catch (err) {
+            return {
+              success: false,
+              error: err.message,
+              key,
+              selector
+            };
+          }
+        })()
+      `);
+
+      if (!result.success) {
+        log.error("[LLMExecutionEngine] Press key failed", result);
+        throw new Error(
+          `Failed to press ${key}: ${result.error || "Unknown error"}`,
+        );
+      }
+
+      log.info("[LLMExecutionEngine] Pressed key", {
+        key,
+        target: target || "active element",
+      });
+    } catch (error) {
+      log.error("[LLMExecutionEngine] Press execution failed", {
+        error,
+        key,
+        target,
+      });
+      throw error;
     }
   }
 

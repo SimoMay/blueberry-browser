@@ -21,6 +21,14 @@ export interface Automation {
     formSelector?: string;
     fields?: Array<{ name: string; valuePattern: string }>;
     pairs?: Array<{ sourceUrl: string; destinationUrl: string }>;
+    steps?: Array<{
+      tab?: number;
+      action: string;
+      target?: string;
+      value?: string;
+      url?: string;
+    }>;
+    [key: string]: unknown; // Allow additional properties for flexibility
   };
   patternType: "navigation" | "form" | "copy-paste";
   executionCount: number;
@@ -47,6 +55,7 @@ interface AutomationContextValue {
   loading: boolean;
   executing: Set<string>; // Set of automation IDs currently executing
   progress: Map<string, ExecutionProgress>; // Map of automation ID to progress
+  refining: string | null; // Automation ID currently being refined
   loadAutomations: () => Promise<void>;
   executeAutomation: (automationId: string) => Promise<void>;
   cancelAutomation: () => Promise<void>; // Cancel currently executing automation
@@ -56,6 +65,8 @@ interface AutomationContextValue {
     description?: string,
   ) => Promise<void>;
   deleteAutomation: (automationId: string) => Promise<void>;
+  startRefinement: (automationId: string) => void; // Open refinement dialog
+  cancelRefinement: () => void; // Close refinement dialog
 }
 
 const AutomationContext = createContext<AutomationContextValue | undefined>(
@@ -76,6 +87,7 @@ export function AutomationProvider({
   const [progress, setProgress] = useState<Map<string, ExecutionProgress>>(
     new Map(),
   );
+  const [refining, setRefining] = useState<string | null>(null);
 
   /**
    * Load all automations from backend
@@ -203,6 +215,20 @@ export function AutomationProvider({
   }, []);
 
   /**
+   * Start workflow refinement (Story 1.17)
+   */
+  const startRefinement = useCallback((automationId: string) => {
+    setRefining(automationId);
+  }, []);
+
+  /**
+   * Cancel workflow refinement (Story 1.17)
+   */
+  const cancelRefinement = useCallback(() => {
+    setRefining(null);
+  }, []);
+
+  /**
    * Set up IPC event listeners for execution progress and completion
    */
   useEffect(() => {
@@ -279,11 +305,14 @@ export function AutomationProvider({
         loading,
         executing,
         progress,
+        refining,
         loadAutomations,
         executeAutomation,
         cancelAutomation,
         editAutomation,
         deleteAutomation,
+        startRefinement,
+        cancelRefinement,
       }}
     >
       {children}

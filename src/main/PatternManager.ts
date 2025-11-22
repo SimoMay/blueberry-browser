@@ -619,6 +619,177 @@ export class PatternManager {
   }
 
   /**
+   * Get a single automation by ID
+   * Story 1.17: Used by WorkflowRefiner to load automation data
+   */
+  public async getAutomation(automationId: string): Promise<{
+    id: string;
+    pattern_id: string;
+    name: string;
+    description?: string;
+    pattern_data: NavigationPattern | FormPattern | CopyPastePattern;
+    workflow?: Record<string, unknown>;
+    intent_summary?: string;
+    execution_count: number;
+    last_executed?: number;
+    created_at: number;
+    updated_at?: number;
+  } | null> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      log.info("[PatternManager] Getting automation:", automationId);
+
+      const stmt = this.db.prepare(`
+        SELECT
+          id,
+          pattern_id,
+          name,
+          description,
+          pattern_data,
+          workflow,
+          intent_summary,
+          execution_count,
+          last_executed,
+          created_at,
+          updated_at
+        FROM automations
+        WHERE id = ?
+      `);
+
+      const row = stmt.get(automationId) as
+        | {
+            id: string;
+            pattern_id: string;
+            name: string;
+            description?: string;
+            pattern_data: string;
+            workflow?: string | null;
+            intent_summary?: string | null;
+            execution_count: number;
+            last_executed?: number | null;
+            created_at: number;
+            updated_at?: number | null;
+          }
+        | undefined;
+
+      if (!row) {
+        log.warn("[PatternManager] Automation not found:", automationId);
+        return null;
+      }
+
+      // Parse JSON fields
+      let pattern_data: NavigationPattern | FormPattern | CopyPastePattern =
+        {} as NavigationPattern;
+      let workflow: Record<string, unknown> | null = null;
+
+      try {
+        pattern_data =
+          typeof row.pattern_data === "string"
+            ? JSON.parse(row.pattern_data)
+            : row.pattern_data;
+      } catch (error) {
+        log.error("[PatternManager] Failed to parse pattern_data", error);
+      }
+
+      try {
+        workflow =
+          row.workflow && typeof row.workflow === "string"
+            ? JSON.parse(row.workflow)
+            : row.workflow;
+      } catch (error) {
+        log.error("[PatternManager] Failed to parse workflow", error);
+      }
+
+      return {
+        id: row.id,
+        pattern_id: row.pattern_id,
+        name: row.name,
+        description: row.description,
+        pattern_data,
+        workflow: workflow || undefined,
+        intent_summary: row.intent_summary || undefined,
+        execution_count: row.execution_count,
+        last_executed: row.last_executed || undefined,
+        created_at: row.created_at,
+        updated_at: row.updated_at || undefined,
+      };
+    } catch (error) {
+      log.error("[PatternManager] Get automation error:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update automation workflow with customizations
+   * Story 1.17: Save refined workflow after conversational customization
+   */
+  public async updateAutomationWorkflow(
+    automationId: string,
+    customizations: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      if (!this.db) {
+        throw new Error("PatternManager not initialized");
+      }
+
+      log.info("[PatternManager] Updating automation workflow:", {
+        automationId,
+        customizations,
+      });
+
+      // Get current automation
+      const automation = await this.getAutomation(automationId);
+      if (!automation) {
+        throw new Error(`Automation ${automationId} not found`);
+      }
+
+      // The customizations IS the complete modified workflow from AI
+      // Save it to pattern_data (which is what execution engine reads)
+      const updatedPatternData = customizations;
+
+      // Also save to workflow column for backward compatibility
+      const updatedWorkflow = {
+        ...(automation.workflow || {}),
+        customizations,
+      };
+
+      // Update intent summary to indicate it was refined
+      const intentSummary = automation.intent_summary
+        ? `${automation.intent_summary} (refined)`
+        : "Refined workflow";
+
+      const stmt = this.db.prepare(`
+        UPDATE automations
+        SET pattern_data = ?, workflow = ?, intent_summary = ?, updated_at = ?
+        WHERE id = ?
+      `);
+
+      const result = stmt.run(
+        JSON.stringify(updatedPatternData),
+        JSON.stringify(updatedWorkflow),
+        intentSummary,
+        Date.now(),
+        automationId,
+      );
+
+      if (result.changes === 0) {
+        throw new Error("Automation not found");
+      }
+
+      log.info(
+        "[PatternManager] Automation workflow updated successfully",
+        automationId,
+      );
+    } catch (error) {
+      log.error("[PatternManager] Update workflow error:", error);
+      throw error;
+    }
+  }
+
+  /**
    * Execute an automation using LLMExecutionEngine
    * Story 1.16: LLM-guided execution with page-by-page AI decisions
    * Returns execution result with steps completed and duration

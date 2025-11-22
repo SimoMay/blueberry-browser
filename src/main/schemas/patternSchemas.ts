@@ -129,6 +129,7 @@ export const CancelExecutionSchema = z.object({
  * Validates LLM response for automation execution
  * Note: target can be null when nextAction is "complete" or "extract"
  * "extract" action: Auto-extracts headings/text from current page (no clicking required)
+ * "press" action: Press a keyboard key (value = "Enter", "Escape", "Tab", etc.)
  */
 export const LLMExecutionStepSchema = z.object({
   nextAction: z.enum([
@@ -138,9 +139,10 @@ export const LLMExecutionStepSchema = z.object({
     "wait",
     "complete",
     "extract",
+    "press", // Press a keyboard key (e.g., "Enter" to submit forms)
   ]),
-  target: z.string().nullable(),
-  value: z.string().nullable(),
+  target: z.string().nullable(), // For "press": element selector to focus first (optional)
+  value: z.string().nullable(), // For "press": key name (e.g., "Enter", "Escape", "Tab")
   reasoning: z.string(),
   isComplete: z.boolean(),
   estimatedStepsRemaining: z.number().nullable(),

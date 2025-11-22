@@ -244,6 +244,31 @@ interface SidebarAPI {
     removeListener: (event: "progress" | "complete") => void;
   };
 
+  // Workflow refinement (Story 1.17)
+  workflow: {
+    startRefinement: (automationId: string) => Promise<
+      PatternAPIResponse<{
+        conversationId: string;
+        greeting: string;
+        firstQuestion: string;
+        workflow: Record<string, unknown>; // Current workflow for display
+      }>
+    >;
+    sendMessage: (
+      conversationId: string,
+      message: string,
+    ) => Promise<
+      PatternAPIResponse<{
+        aiResponse: string;
+        isComplete: boolean;
+        customizations?: Record<string, unknown>; // Proposed changes
+        originalWorkflow?: Record<string, unknown>; // For comparison
+      }>
+    >;
+    saveRefined: (conversationId: string) => Promise<PatternAPIResponse>;
+    reset: (conversationId: string) => Promise<PatternAPIResponse>;
+  };
+
   // Monitor management functionality
   monitor: {
     create: (data: MonitorCreateInput) => Promise<MonitorAPIResponse<Monitor>>;

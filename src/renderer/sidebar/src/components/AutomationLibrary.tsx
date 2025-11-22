@@ -7,6 +7,7 @@ import { Button } from "@common/components/Button";
 import { RecordingPreviewModal } from "./RecordingPreviewModal";
 import { ZeroActionModal } from "./ZeroActionModal";
 import { RecordingActiveModal } from "./RecordingActiveModal";
+import { WorkflowRefinementDialog } from "./WorkflowRefinementDialog";
 
 interface AutomationLibraryProps {
   onBackToChat?: () => void;
@@ -23,11 +24,14 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
     loading,
     executing,
     progress,
+    refining,
     loadAutomations,
     executeAutomation,
     cancelAutomation,
     editAutomation,
     deleteAutomation,
+    startRefinement,
+    cancelRefinement,
   } = useAutomation();
 
   const { recording, startRecording, stopRecording } = useRecording();
@@ -264,6 +268,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
                 onCancel={cancelAutomation}
                 onEdit={editAutomation}
                 onDelete={deleteAutomation}
+                onRefine={startRefinement}
               />
             ))}
           </div>
@@ -294,6 +299,25 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
           recordingTabTitle={recordingActiveError.tabTitle}
           onSwitchToTab={handleSwitchToRecordingTab}
           onCancel={handleRecordingActiveCancel}
+        />
+      )}
+
+      {/* Workflow Refinement Dialog (Story 1.17) */}
+      {refining && (
+        <WorkflowRefinementDialog
+          isOpen={true}
+          automationId={refining}
+          automationName={
+            automations.find((a) => a.id === refining)?.name || "Automation"
+          }
+          intentSummary={
+            automations.find((a) => a.id === refining)?.description
+          }
+          onClose={cancelRefinement}
+          onSaved={() => {
+            loadAutomations(); // Reload automations to show updated data
+            cancelRefinement(); // Close dialog
+          }}
         />
       )}
     </div>

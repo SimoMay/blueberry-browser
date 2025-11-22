@@ -8,11 +8,14 @@ import {
   Loader2,
   X,
   Copy,
+  Settings,
+  Eye,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@common/components/Button";
 import { Modal } from "@common/components/Modal";
 import { Automation } from "../contexts/AutomationContext";
+import { WorkflowDisplay } from "./WorkflowDisplay";
 
 interface AutomationItemProps {
   automation: Automation;
@@ -31,6 +34,7 @@ interface AutomationItemProps {
     description?: string,
   ) => Promise<void>;
   onDelete: (automationId: string) => Promise<void>;
+  onRefine: (automationId: string) => void; // Story 1.17: Open refinement dialog
 }
 
 /**
@@ -44,10 +48,12 @@ export const AutomationItem: React.FC<AutomationItemProps> = ({
   onCancel,
   onEdit,
   onDelete,
+  onRefine,
 }) => {
   const [showExecuteModal, setShowExecuteModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showOverviewModal, setShowOverviewModal] = useState(false);
   const [editName, setEditName] = useState(automation.name);
   const [editDescription, setEditDescription] = useState(
     automation.description || "",
@@ -305,6 +311,26 @@ export const AutomationItem: React.FC<AutomationItemProps> = ({
           <Button
             size="sm"
             variant="secondary"
+            onClick={() => setShowOverviewModal(true)}
+            disabled={executing}
+            title="View workflow details"
+          >
+            <Eye className="h-3 w-3" />
+          </Button>
+
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => onRefine(automation.id)}
+            disabled={executing}
+            title="Refine and customize this workflow"
+          >
+            <Settings className="h-3 w-3" />
+          </Button>
+
+          <Button
+            size="sm"
+            variant="secondary"
             onClick={() => {
               setEditName(automation.name);
               setEditDescription(automation.description || "");
@@ -462,6 +488,30 @@ export const AutomationItem: React.FC<AutomationItemProps> = ({
               disabled={submitting}
             >
               {submitting ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Workflow Overview Modal */}
+      <Modal
+        isOpen={showOverviewModal}
+        onClose={() => setShowOverviewModal(false)}
+        title={`Workflow Overview: ${automation.name}`}
+      >
+        <div className="space-y-4">
+          <WorkflowDisplay
+            workflow={automation.patternData}
+            title="Workflow Steps"
+            collapsible={false}
+          />
+
+          <div className="flex gap-2 justify-end pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setShowOverviewModal(false)}
+            >
+              Close
             </Button>
           </div>
         </div>
