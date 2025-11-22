@@ -6,6 +6,22 @@ import { z } from "zod";
 export const PatternTypeSchema = z.enum(["navigation", "form", "copy-paste"]);
 
 /**
+ * LLM Analysis Result Schema (Story 1.15)
+ * Validates LLM response for pattern detection
+ */
+export const LLMAnalysisResultSchema = z.object({
+  isPattern: z.boolean(),
+  confidence: z.number().min(0).max(100),
+  intentSummary: z.string().max(200),
+  workflow: z
+    .object({
+      steps: z.array(z.unknown()),
+    })
+    .nullable(),
+  rejectionReason: z.string().nullable(),
+});
+
+/**
  * Pattern track input schema
  */
 export const PatternTrackSchema = z.object({
@@ -124,3 +140,4 @@ export type SuggestContinuationInput = z.infer<
 >;
 export type StartContinuationInput = z.infer<typeof StartContinuationSchema>;
 export type CancelExecutionInput = z.infer<typeof CancelExecutionSchema>;
+export type LLMAnalysisResult = z.infer<typeof LLMAnalysisResultSchema>;

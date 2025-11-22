@@ -9,7 +9,7 @@ import {
 } from "./schemas/patternSchemas";
 import { SaveRecordingInput } from "./schemas/recordingSchemas";
 import { IntentSummarizer } from "./IntentSummarizer"; // Story 1.12
-import { PatternRecognizer } from "./PatternRecognizer"; // Story 1.14
+import { LLMPatternAnalyzer, type SessionAction } from "./LLMPatternAnalyzer"; // Story 1.15
 import { NotificationManager } from "./NotificationManager"; // Story 1.9
 
 /**
@@ -161,9 +161,12 @@ export class PatternManager {
   private static instance: PatternManager | null = null;
   private db: Database.Database | null = null;
   private intentSummarizer: IntentSummarizer | null = null; // Story 1.12
+  private llmAnalyzer: LLMPatternAnalyzer | null = null; // Story 1.15
   private notificationManager: NotificationManager | null = null; // Story 1.9
   private recentCopyEvents: CopyEventData[] = []; // Story 1.7b
   private copyEventCleanupInterval: NodeJS.Timeout | null = null; // Story 1.7b
+  private sessionActions: SessionAction[] = []; // Story 1.15 - Session tracking for LLM context
+  private lastLLMCallTimestamps: Map<string, number> = new Map(); // Story 1.15 - Rate limiting for LLM calls
 
   private constructor() {
     // Private constructor for singleton pattern
@@ -192,6 +195,9 @@ export class PatternManager {
 
       // Initialize IntentSummarizer (Story 1.12)
       this.intentSummarizer = IntentSummarizer.getInstance(this.db);
+
+      // Initialize LLMPatternAnalyzer (Story 1.15)
+      this.llmAnalyzer = new LLMPatternAnalyzer();
 
       // Initialize NotificationManager (Story 1.9)
       this.notificationManager = NotificationManager.getInstance();
@@ -616,9 +622,10 @@ export class PatternManager {
    */
   public async executeAutomation(
     automationId: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    window: any, // Window instance passed from EventManager (circular dependency prevents proper typing)
-    onProgress?: (step: number, total: number, description: string) => void,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+    _window: any, // Window instance passed from EventManager (circular dependency prevents proper typing)
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _onProgress?: (step: number, total: number, description: string) => void,
   ): Promise<
     IPCResponse<{ stepsExecuted: number; duration: number; error?: string }>
   > {
@@ -652,54 +659,19 @@ export class PatternManager {
         throw new Error("Automation not found");
       }
 
-      // Parse pattern data
-      const patternData = JSON.parse(automation.patternData);
-
-      // Import AutomationExecutor dynamically to avoid circular dependency
-      const { AutomationExecutor } = await import("./AutomationExecutor");
-      const executor = new AutomationExecutor(window);
-
-      // Execute automation
-      const result = await executor.execute(
-        automationId,
-        automation.patternType,
-        patternData,
-        onProgress,
+      // TODO: Story 1.16 - LLM-guided execution not implemented yet
+      // Temporary error response until Story 1.16 is complete
+      log.warn(
+        `[PatternManager] Automation execution requested but not yet implemented: ${automationId}`,
       );
 
-      if (result.success) {
-        // Update execution_count and last_executed timestamp
-        const updateStmt = this.db.prepare(`
-          UPDATE automations
-          SET execution_count = execution_count + 1,
-              last_executed = ?
-          WHERE id = ?
-        `);
-
-        updateStmt.run(Date.now(), automationId);
-
-        log.info(
-          `[PatternManager] Automation executed successfully: ${automationId} (${result.stepsExecuted} steps in ${result.duration}ms)`,
-        );
-      } else {
-        log.error(
-          `[PatternManager] Automation execution failed: ${automationId}`,
-          result.error,
-        );
-      }
-
       return {
-        success: result.success,
-        data: {
-          stepsExecuted: result.stepsExecuted,
-          duration: result.duration,
+        success: false,
+        error: {
+          code: "NOT_IMPLEMENTED",
+          message:
+            "LLM-guided automation execution will be implemented in Story 1.16",
         },
-        error: result.error
-          ? {
-              code: "EXECUTION_ERROR",
-              message: result.error,
-            }
-          : undefined,
       };
     } catch (error) {
       log.error("[PatternManager] Execute automation error:", error);
@@ -838,23 +810,15 @@ export class PatternManager {
       // Run cleanup if needed (lightweight check)
       await this.cleanupOldPatterns();
 
-      // Track session action for mid-workflow detection (Story 1.14)
-      try {
-        const recognizer = PatternRecognizer.getInstance();
-        recognizer.trackSessionAction("navigation", {
-          url: event.url,
-          tabId: event.tabId,
-          timestamp: event.timestamp,
-        });
-
-        // Check if we should trigger a mid-workflow suggestion
-        await recognizer.detectMidWorkflowPattern();
-      } catch (error) {
-        log.warn(
-          "[PatternManager] Mid-workflow tracking failed (non-critical):",
-          error,
-        );
-      }
+      // Track session action for LLM pattern analysis (Story 1.15)
+      await this.trackSessionAndAnalyze({
+        type: "navigation",
+        url: event.url,
+        pageTitle: event.pageTitle,
+        timestamp: event.timestamp,
+        tabId: event.tabId,
+        eventType: event.eventType,
+      });
 
       return { success: true };
     } catch (error) {
@@ -1042,23 +1006,17 @@ export class PatternManager {
       // Run cleanup if needed
       await this.cleanupOldPatterns();
 
-      // Track session action for mid-workflow detection (Story 1.14)
-      try {
-        const recognizer = PatternRecognizer.getInstance();
-        recognizer.trackSessionAction("form", {
-          domain: data.domain,
-          formSelector: data.formSelector,
-          timestamp: data.timestamp,
-        });
-
-        // Check if we should trigger a mid-workflow suggestion
-        await recognizer.detectMidWorkflowPattern();
-      } catch (error) {
-        log.warn(
-          "[PatternManager] Mid-workflow tracking failed (non-critical):",
-          error,
-        );
-      }
+      // Track session action for LLM pattern analysis (Story 1.15)
+      await this.trackSessionAndAnalyze({
+        type: "form",
+        url: `https://${data.domain}`,
+        pageTitle: data.domain,
+        timestamp: data.timestamp,
+        tabId: data.tabId,
+        domain: data.domain,
+        formSelector: data.formSelector,
+        fields: data.fields,
+      });
 
       return { success: true };
     } catch (error) {
@@ -1070,6 +1028,356 @@ export class PatternManager {
           message: error instanceof Error ? error.message : "Unknown error",
         },
       };
+    }
+  }
+
+  /**
+   * Track session action and analyze with LLM
+   * Story 1.15 - AC 1, 2, 3: LLM-powered pattern detection
+   * Code Review Fix: Added pattern deduplication and rate limiting
+   */
+  private async trackSessionAndAnalyze(action: SessionAction): Promise<void> {
+    try {
+      if (!this.llmAnalyzer || !this.db) {
+        return;
+      }
+
+      // Add action to session
+      this.sessionActions.push(action);
+
+      // Clean up old actions (keep last 10 minutes)
+      const TEN_MINUTES_MS = 10 * 60 * 1000;
+      this.sessionActions = this.sessionActions.filter(
+        (a) => action.timestamp - a.timestamp < TEN_MINUTES_MS,
+      );
+
+      // Group actions by type
+      const sameTypeActions = this.sessionActions.filter(
+        (a) => a.type === action.type,
+      );
+
+      // Check if we have enough iterations for analysis (2-3 actions)
+      if (sameTypeActions.length < 2 || sameTypeActions.length > 4) {
+        return; // Wait for 2-3 iterations before analyzing
+      }
+
+      // CODE REVIEW FIX #3: Rate limiting - max 1 LLM call per 5 seconds per pattern type
+      const RATE_LIMIT_MS = 5000; // 5 seconds
+      const lastCallTime = this.lastLLMCallTimestamps.get(action.type) || 0;
+      const timeSinceLastCall = Date.now() - lastCallTime;
+
+      if (timeSinceLastCall < RATE_LIMIT_MS) {
+        log.info(
+          `[PatternManager] Rate limit: Skipping LLM call for ${action.type} (${(RATE_LIMIT_MS - timeSinceLastCall) / 1000}s remaining)`,
+        );
+        return;
+      }
+
+      // CODE REVIEW FIX #1: Pattern deduplication - check if pattern already exists
+      log.info(
+        `[PatternManager] Checking for existing ${action.type} patterns before LLM call...`,
+      );
+      const existingPattern = await this.findMatchingPattern(
+        sameTypeActions,
+        action.type,
+      );
+      if (existingPattern) {
+        if (existingPattern.dismissed === 0) {
+          log.info(
+            `[PatternManager] Pattern already detected (${existingPattern.id}), skipping LLM call`,
+          );
+          return;
+        } else {
+          log.info(
+            `[PatternManager] Similar pattern found but dismissed (${existingPattern.id}), will re-analyze with LLM`,
+          );
+        }
+      } else {
+        log.info(
+          `[PatternManager] No existing patterns found, proceeding with LLM call`,
+        );
+      }
+
+      log.info(
+        `[PatternManager] Analyzing ${sameTypeActions.length} ${action.type} actions with LLM`,
+      );
+
+      // Update rate limit timestamp
+      this.lastLLMCallTimestamps.set(action.type, Date.now());
+
+      // Analyze with LLM
+      const analysis =
+        await this.llmAnalyzer.analyzeActionSequence(sameTypeActions);
+
+      if (analysis.isPattern && analysis.confidence > 70) {
+        // LLM confirmed pattern with high confidence
+        log.info(
+          `[PatternManager] LLM detected pattern: ${analysis.intentSummary} (confidence: ${analysis.confidence}%)`,
+        );
+
+        // Save pattern to database
+        // CODE REVIEW FIX #2: Use UUID consistently instead of timestamp
+        const patternId = uuidv4();
+        const now = Date.now();
+
+        const stmt = this.db.prepare(`
+          INSERT INTO patterns (
+            id, type, pattern_data, confidence, occurrence_count,
+            first_seen, last_seen, created_at, intent_summary, summary_generated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        stmt.run(
+          patternId,
+          action.type,
+          JSON.stringify(analysis.workflow), // LLM-decided workflow format
+          analysis.confidence,
+          sameTypeActions.length, // Occurrence count
+          sameTypeActions[0].timestamp, // First action timestamp
+          now, // Last seen
+          now, // Created at
+          analysis.intentSummary, // Intent summary from LLM (Story 1.15 - AC 2)
+          now, // Summary generated at
+        );
+
+        log.info(`[PatternManager] Pattern saved: ${patternId}`);
+
+        // Create notification
+        if (this.notificationManager) {
+          await this.notificationManager.createNotification({
+            type: "pattern",
+            severity: "info",
+            title: "Pattern detected",
+            message: `I noticed you're ${analysis.intentSummary}. Want me to help?`,
+            data: {
+              id: patternId,
+              type: action.type,
+              confidence: analysis.confidence,
+              occurrenceCount: sameTypeActions.length,
+              patternData: analysis.workflow,
+            },
+          });
+        }
+
+        // Clear session actions after pattern detection
+        this.sessionActions = [];
+      } else if (!analysis.isPattern) {
+        // LLM rejected pattern (Story 1.15 - AC 3)
+        log.info(
+          `[PatternManager] LLM rejected pattern: ${analysis.rejectionReason || "Not a repetitive pattern"}`,
+        );
+
+        // Clear rejected actions to avoid accumulation (Story 1.15 - AC 3)
+        this.sessionActions = this.sessionActions.filter(
+          (a) => a.type !== action.type,
+        );
+      }
+    } catch (error) {
+      log.error("[PatternManager] LLM pattern analysis error:", error);
+      // Continue without pattern detection - non-critical
+    }
+  }
+
+  /**
+   * Find matching pattern in database to avoid duplicate LLM calls
+   * Code Review Fix #1: Pattern deduplication
+   */
+  private async findMatchingPattern(
+    actions: SessionAction[],
+    patternType: string,
+  ): Promise<{ id: string; dismissed: number } | null> {
+    try {
+      if (!this.db) {
+        return null;
+      }
+
+      // Query recent patterns of the same type (last 7 days, not dismissed)
+      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+      const cutoffTime = Date.now() - SEVEN_DAYS_MS;
+
+      const stmt = this.db.prepare(`
+        SELECT id, pattern_data, dismissed
+        FROM patterns
+        WHERE type = ?
+        AND created_at > ?
+        ORDER BY created_at DESC
+        LIMIT 20
+      `);
+
+      const patterns = stmt.all(patternType, cutoffTime) as Array<{
+        id: string;
+        pattern_data: string;
+        dismissed: number;
+      }>;
+
+      log.info(
+        `[PatternManager] Deduplication: Found ${patterns.length} existing ${patternType} patterns to compare`,
+      );
+
+      // Compare action sequences to find similar patterns
+      for (const pattern of patterns) {
+        log.info(
+          `[PatternManager] Deduplication: Comparing against pattern ${pattern.id.substring(0, 8)}... (dismissed: ${pattern.dismissed})`,
+        );
+
+        if (this.isSimilarPattern(actions, pattern.pattern_data, patternType)) {
+          log.info(
+            `[PatternManager] Deduplication: MATCH FOUND - Pattern ${pattern.id} is similar`,
+          );
+          return { id: pattern.id, dismissed: pattern.dismissed };
+        } else {
+          log.info(
+            `[PatternManager] Deduplication: No match - Pattern ${pattern.id.substring(0, 8)}... is different`,
+          );
+        }
+      }
+
+      log.info(
+        `[PatternManager] Deduplication: No similar patterns found, will call LLM`,
+      );
+      return null;
+    } catch (error) {
+      log.error("[PatternManager] Error finding matching pattern:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if action sequence is similar to existing pattern
+   * Code Review Fix #1: Pattern similarity comparison
+   */
+  private isSimilarPattern(
+    actions: SessionAction[],
+    patternDataStr: string,
+    patternType: string,
+  ): boolean {
+    try {
+      // For navigation patterns: compare URLs
+      if (patternType === "navigation") {
+        const urls = actions.map((a) => a.url).filter(Boolean);
+        // Check if pattern includes similar URL sequence
+        // Simple heuristic: same domain patterns
+        const domains = urls.map((url) => {
+          try {
+            return new URL(url!).hostname;
+          } catch {
+            return "";
+          }
+        });
+        const uniqueDomains = new Set(domains);
+
+        log.info(
+          `[PatternManager] Similarity check (navigation): Action domains: [${Array.from(uniqueDomains).join(", ")}]`,
+        );
+
+        // If pattern involves same domain(s), consider it similar
+        const patternData = JSON.parse(patternDataStr);
+        if (patternData.steps) {
+          // LLM-generated workflow format
+          const patternDomains = new Set(
+            patternData.steps
+              .map((step: { url?: string }) => {
+                if (step.url) {
+                  try {
+                    return new URL(step.url).hostname;
+                  } catch {
+                    return "";
+                  }
+                }
+                return "";
+              })
+              .filter(Boolean),
+          );
+
+          log.info(
+            `[PatternManager] Similarity check (navigation): Pattern domains: [${Array.from(patternDomains).join(", ")}]`,
+          );
+
+          // Check if domains overlap
+          for (const domain of uniqueDomains) {
+            if (patternDomains.has(domain)) {
+              log.info(
+                `[PatternManager] Similarity check (navigation): Domain match found: ${domain}`,
+              );
+              return true;
+            }
+          }
+        }
+      }
+
+      // For form patterns: compare domains
+      if (patternType === "form") {
+        const domains = actions
+          .map((a) => a.domain)
+          .filter(Boolean) as string[];
+        const patternData = JSON.parse(patternDataStr);
+
+        log.info(
+          `[PatternManager] Similarity check (form): Action domains: [${domains.join(", ")}]`,
+        );
+        log.info(
+          `[PatternManager] Similarity check (form): Pattern domain: ${patternData.domain || "none"}`,
+        );
+
+        if (
+          patternData.domain &&
+          domains.some((d) => d === patternData.domain)
+        ) {
+          log.info(
+            `[PatternManager] Similarity check (form): Domain match found`,
+          );
+          return true;
+        }
+      }
+
+      // For copy-paste patterns: compare source/destination URL pairs
+      if (patternType === "copy-paste") {
+        const pairs = actions
+          .map((a) => `${a.sourceUrl || ""}->${a.destinationUrl || ""}`)
+          .filter((p) => p !== "->");
+
+        log.info(
+          `[PatternManager] Similarity check (copy-paste): Action pairs: [${pairs.join(", ")}]`,
+        );
+
+        const patternData = JSON.parse(patternDataStr);
+        if (patternData.steps) {
+          // LLM-generated workflow
+          const patternPairs = patternData.steps
+            .filter((s: { action?: string }) => s.action === "paste")
+            .map(
+              (s: { sourceUrl?: string; destinationUrl?: string }) =>
+                `${s.sourceUrl || ""}->${s.destinationUrl || ""}`,
+            );
+
+          log.info(
+            `[PatternManager] Similarity check (copy-paste): Pattern pairs from workflow: [${patternPairs.join(", ")}]`,
+          );
+
+          // Check if any pair matches
+          for (const pair of pairs) {
+            if (patternPairs.includes(pair)) {
+              log.info(
+                `[PatternManager] Similarity check (copy-paste): Pair match found: ${pair}`,
+              );
+              return true;
+            }
+          }
+
+          log.info(
+            `[PatternManager] Similarity check (copy-paste): No pair matches found`,
+          );
+        } else {
+          log.info(
+            `[PatternManager] Similarity check (copy-paste): Pattern has no steps field in workflow`,
+          );
+        }
+      }
+
+      return false;
+    } catch (error) {
+      log.error("[PatternManager] Error comparing pattern similarity:", error);
+      return false;
     }
   }
 
@@ -1312,7 +1620,6 @@ export class PatternManager {
       }
 
       const COPY_PASTE_MAX_GAP_MS = 5 * 60 * 1000; // 5 minutes
-      const DETECTION_THRESHOLD = 3; // Trigger notification after 3 copy-paste pairs
       const MAX_COPY_EVENTS = 100; // Limit in-memory storage
 
       // Handle copy event
@@ -1410,174 +1717,21 @@ export class PatternManager {
           timeGap: `${(timeGap / 1000).toFixed(1)}s`,
         });
 
-        // Track session action for mid-workflow detection (Story 1.14)
-        try {
-          const recognizer = PatternRecognizer.getInstance();
-          recognizer.trackSessionAction("copy-paste", {
-            sourceUrl: pair.sourceUrl,
-            destinationUrl: pair.destinationUrl,
-            sourceElement: pair.sourceElement,
-            destinationElement: pair.destinationElement,
-            timestamp,
-          });
-        } catch (error) {
-          log.error(
-            "[PatternManager] Failed to track copy-paste session action:",
-            error,
-          );
-        }
+        // Track session action for LLM pattern analysis (Story 1.15)
+        await this.trackSessionAndAnalyze({
+          type: "copy-paste",
+          url: pair.destinationUrl,
+          pageTitle: pair.destinationPageTitle,
+          timestamp,
+          tabId: data.pasteEvent?.tabId || "unknown",
+          sourceUrl: pair.sourceUrl,
+          destinationUrl: pair.destinationUrl,
+          sourceElement: pair.sourceElement,
+          destinationElement: pair.destinationElement,
+          copiedText: pair.copiedText,
+        });
 
-        // Generate pattern hash for matching (source URL + destination URL + element selectors)
-        const patternHash = `${recentCopy.url}::${url}::${recentCopy.sourceElement}::${destinationElement}`;
-
-        // Find existing pattern with same source/destination combination
-        const existingPatternStmt = this.db.prepare(`
-          SELECT id, pattern_data, occurrence_count, confidence
-          FROM patterns
-          WHERE type = 'copy-paste'
-          ORDER BY last_seen DESC
-        `);
-
-        const existingPatterns = existingPatternStmt.all() as Array<{
-          id: string;
-          pattern_data: string;
-          occurrence_count: number;
-          confidence: number;
-        }>;
-
-        // Find matching pattern by comparing pattern hash
-        let matchingPattern: (typeof existingPatterns)[0] | undefined;
-        for (const pattern of existingPatterns) {
-          const patternData: CopyPastePattern = JSON.parse(
-            pattern.pattern_data,
-          );
-          const firstPair = patternData.pairs[0];
-          if (!firstPair) continue;
-
-          const existingHash = `${firstPair.sourceUrl}::${firstPair.destinationUrl}::${firstPair.sourceElement}::${firstPair.destinationElement}`;
-
-          if (existingHash === patternHash) {
-            matchingPattern = pattern;
-            break;
-          }
-        }
-
-        if (matchingPattern) {
-          // Increment occurrence count for existing pattern
-          const newOccurrenceCount = matchingPattern.occurrence_count + 1;
-          const newConfidence = Math.min(newOccurrenceCount * 20, 100); // Max 100%
-
-          const updateStmt = this.db.prepare(`
-            UPDATE patterns
-            SET occurrence_count = ?,
-                confidence = ?,
-                last_seen = ?
-            WHERE id = ?
-          `);
-
-          updateStmt.run(
-            newOccurrenceCount,
-            newConfidence,
-            timestamp,
-            matchingPattern.id,
-          );
-
-          log.info(
-            "[PatternManager] Copy-paste pattern occurrence incremented:",
-            {
-              patternId: matchingPattern.id,
-              occurrenceCount: newOccurrenceCount,
-              confidence: newConfidence,
-            },
-          );
-
-          // Generate intent summaries if confidence >70% (Story 1.12)
-          if (newConfidence > 70 && this.intentSummarizer) {
-            try {
-              const summaries = await this.intentSummarizer.summarizePattern(
-                matchingPattern.id,
-              );
-              log.info(
-                `[PatternManager] Intent summaries for ${matchingPattern.id}:\n  Short: "${summaries.short}"\n  Detailed: "${summaries.detailed}"`,
-              );
-            } catch (summaryError) {
-              log.error(
-                "[PatternManager] Failed to generate intent summaries:",
-                summaryError,
-              );
-            }
-          }
-
-          // Trigger notification if threshold reached
-          if (newOccurrenceCount === DETECTION_THRESHOLD) {
-            log.info(
-              "[PatternManager] Copy-paste pattern threshold reached - notification triggered",
-              {
-                patternId: matchingPattern.id,
-                sourceUrl: pair.sourceUrl,
-                destinationUrl: pair.destinationUrl,
-              },
-            );
-
-            // Create notification through NotificationManager (Story 1.9)
-            if (this.notificationManager) {
-              const sourceHostname = new URL(pair.sourceUrl).hostname;
-              const destHostname = new URL(pair.destinationUrl).hostname;
-              const notification =
-                await this.notificationManager.createNotification({
-                  type: "pattern",
-                  severity: "info",
-                  title: "Copy-paste pattern detected",
-                  message: `You've copied from ${sourceHostname} to ${destHostname} ${newOccurrenceCount} times`,
-                  data: {
-                    id: matchingPattern.id, // Must match PatternRecognizer format for SidebarApp.tsx
-                    type: "copy-paste" as const,
-                    confidence: newConfidence,
-                    occurrenceCount: newOccurrenceCount,
-                    patternData: JSON.parse(matchingPattern.pattern_data),
-                  },
-                });
-
-              if (notification) {
-                log.info(
-                  "[PatternManager] Copy-paste notification created",
-                  notification.id,
-                );
-              }
-            }
-          }
-        } else {
-          // Create new copy-paste pattern
-          const patternId = `copy-paste-${patternHash}-${Date.now()}`;
-          const copyPastePattern: CopyPastePattern = {
-            pairs: [pair],
-          };
-
-          const insertStmt = this.db.prepare(`
-            INSERT INTO patterns (
-              id, type, pattern_data, confidence, occurrence_count,
-              first_seen, last_seen, created_at
-            ) VALUES (?, 'copy-paste', ?, 0, 1, ?, ?, ?)
-          `);
-
-          insertStmt.run(
-            patternId,
-            JSON.stringify(copyPastePattern),
-            timestamp,
-            timestamp,
-            timestamp,
-          );
-
-          log.info("[PatternManager] New copy-paste pattern created:", {
-            patternId,
-            sourceUrl: pair.sourceUrl,
-            destinationUrl: pair.destinationUrl,
-          });
-        }
-
-        // Run cleanup if needed
-        await this.cleanupOldPatterns();
-
+        // Return early - LLM has handled pattern detection (Story 1.15)
         return { success: true };
       }
 
