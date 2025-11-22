@@ -25,6 +25,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
     progress,
     loadAutomations,
     executeAutomation,
+    cancelAutomation,
     editAutomation,
     deleteAutomation,
   } = useAutomation();
@@ -260,6 +261,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
                 executing={executing.has(automation.id)}
                 progress={progress.get(automation.id) || null}
                 onExecute={executeAutomation}
+                onCancel={cancelAutomation}
                 onEdit={editAutomation}
                 onDelete={deleteAutomation}
               />

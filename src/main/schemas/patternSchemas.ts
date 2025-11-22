@@ -125,6 +125,28 @@ export const CancelExecutionSchema = z.object({
 });
 
 /**
+ * LLM Execution Step Schema (Story 1.16)
+ * Validates LLM response for automation execution
+ * Note: target can be null when nextAction is "complete" or "extract"
+ * "extract" action: Auto-extracts headings/text from current page (no clicking required)
+ */
+export const LLMExecutionStepSchema = z.object({
+  nextAction: z.enum([
+    "click",
+    "type",
+    "navigate",
+    "wait",
+    "complete",
+    "extract",
+  ]),
+  target: z.string().nullable(),
+  value: z.string().nullable(),
+  reasoning: z.string(),
+  isComplete: z.boolean(),
+  estimatedStepsRemaining: z.number().nullable(),
+});
+
+/**
  * Type exports for TypeScript
  */
 export type PatternTrackInput = z.infer<typeof PatternTrackSchema>;
@@ -141,3 +163,4 @@ export type SuggestContinuationInput = z.infer<
 export type StartContinuationInput = z.infer<typeof StartContinuationSchema>;
 export type CancelExecutionInput = z.infer<typeof CancelExecutionSchema>;
 export type LLMAnalysisResult = z.infer<typeof LLMAnalysisResultSchema>;
+export type LLMExecutionStep = z.infer<typeof LLMExecutionStepSchema>;

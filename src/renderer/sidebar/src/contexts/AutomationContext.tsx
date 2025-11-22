@@ -20,8 +20,9 @@ export interface Automation {
     domain?: string;
     formSelector?: string;
     fields?: Array<{ name: string; valuePattern: string }>;
+    pairs?: Array<{ sourceUrl: string; destinationUrl: string }>;
   };
-  patternType: "navigation" | "form";
+  patternType: "navigation" | "form" | "copy-paste";
   executionCount: number;
   lastExecuted?: number;
   createdAt: number;
@@ -35,6 +36,7 @@ export interface ExecutionProgress {
   currentStep: number;
   totalSteps: number;
   stepDescription: string;
+  screenshot?: string; // Base64 screenshot thumbnail for progress display
 }
 
 /**
@@ -47,6 +49,7 @@ interface AutomationContextValue {
   progress: Map<string, ExecutionProgress>; // Map of automation ID to progress
   loadAutomations: () => Promise<void>;
   executeAutomation: (automationId: string) => Promise<void>;
+  cancelAutomation: () => Promise<void>; // Cancel currently executing automation
   editAutomation: (
     automationId: string,
     name: string,
@@ -133,6 +136,25 @@ export function AutomationProvider({
     },
     [loadAutomations],
   );
+
+  /**
+   * Cancel automation execution
+   */
+  const cancelAutomation = useCallback(async () => {
+    try {
+      const result = await window.sidebarAPI.automations.cancel();
+
+      if (result.success) {
+        console.log("[AutomationContext] Automation cancelled successfully");
+        // The onComplete handler will clean up executing and progress state
+      } else {
+        throw new Error(result.error?.message || "Cancel failed");
+      }
+    } catch (error) {
+      console.error("[AutomationContext] Cancel error:", error);
+      throw error; // Re-throw so UI can handle it
+    }
+  }, []);
 
   /**
    * Edit automation name and description
@@ -259,6 +281,7 @@ export function AutomationProvider({
         progress,
         loadAutomations,
         executeAutomation,
+        cancelAutomation,
         editAutomation,
         deleteAutomation,
       }}

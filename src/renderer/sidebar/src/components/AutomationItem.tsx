@@ -6,6 +6,8 @@ import {
   Navigation,
   FileText,
   Loader2,
+  X,
+  Copy,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@common/components/Button";
@@ -19,8 +21,10 @@ interface AutomationItemProps {
     currentStep: number;
     totalSteps: number;
     stepDescription: string;
+    screenshot?: string; // Base64 screenshot thumbnail
   } | null;
   onExecute: (automationId: string) => void;
+  onCancel: () => void; // Cancel automation execution
   onEdit: (
     automationId: string,
     name: string,
@@ -37,6 +41,7 @@ export const AutomationItem: React.FC<AutomationItemProps> = ({
   executing,
   progress,
   onExecute,
+  onCancel,
   onEdit,
   onDelete,
 }) => {
@@ -55,6 +60,8 @@ export const AutomationItem: React.FC<AutomationItemProps> = ({
       return <Navigation className="h-4 w-4 text-blue-500" />;
     } else if (automation.patternType === "form") {
       return <FileText className="h-4 w-4 text-green-500" />;
+    } else if (automation.patternType === "copy-paste") {
+      return <Copy className="h-4 w-4 text-purple-500" />;
     }
     return null;
   };
@@ -67,6 +74,9 @@ export const AutomationItem: React.FC<AutomationItemProps> = ({
     } else if (automation.patternType === "form") {
       const fields = automation.patternData.fields || [];
       return `${fields.length} fields`;
+    } else if (automation.patternType === "copy-paste") {
+      const pairs = automation.patternData.pairs || [];
+      return `${pairs.length} ${pairs.length === 1 ? "pair" : "pairs"}`;
     }
     return "Unknown";
   };
@@ -113,6 +123,32 @@ export const AutomationItem: React.FC<AutomationItemProps> = ({
           <div className="text-xs text-gray-600 dark:text-gray-400">
             {fields.length} {fields.length === 1 ? "field" : "fields"} to fill
           </div>
+        </div>
+      );
+    } else if (automation.patternType === "copy-paste") {
+      const pairs = automation.patternData.pairs || [];
+      const preview = pairs.slice(0, 2);
+      return (
+        <div className="space-y-1">
+          {preview.map(
+            (
+              pair: { sourceUrl: string; destinationUrl: string },
+              index: number,
+            ) => (
+              <div
+                key={index}
+                className="text-xs text-gray-600 dark:text-gray-400"
+              >
+                {index + 1}. {new URL(pair.sourceUrl).hostname} →{" "}
+                {new URL(pair.destinationUrl).hostname}
+              </div>
+            ),
+          )}
+          {pairs.length > 2 && (
+            <div className="text-xs text-gray-500 dark:text-gray-500">
+              ... and {pairs.length - 2} more pairs
+            </div>
+          )}
         </div>
       );
     }
@@ -208,14 +244,39 @@ export const AutomationItem: React.FC<AutomationItemProps> = ({
         {/* Progress indicator */}
         {executing && progress && (
           <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
-            <div className="flex items-center gap-2 mb-1">
-              <Loader2 className="h-3 w-3 animate-spin text-blue-600 dark:text-blue-400" />
-              <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
-                Step {progress.currentStep} of {progress.totalSteps}
-              </span>
-            </div>
-            <div className="text-xs text-blue-600 dark:text-blue-400">
-              {progress.stepDescription}
+            <div className="flex items-start gap-2">
+              {/* Screenshot thumbnail */}
+              {progress.screenshot && (
+                <img
+                  src={progress.screenshot}
+                  alt="Current step"
+                  className="w-16 h-16 rounded object-cover flex-shrink-0"
+                />
+              )}
+
+              {/* Progress info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <Loader2 className="h-3 w-3 animate-spin text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                  <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
+                    Step {progress.currentStep} of {progress.totalSteps}
+                  </span>
+                </div>
+                <div className="text-xs text-blue-600 dark:text-blue-400 max-h-24 overflow-y-auto whitespace-pre-wrap break-words">
+                  {progress.stepDescription}
+                </div>
+              </div>
+
+              {/* Cancel button */}
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={onCancel}
+                className="flex-shrink-0"
+                title="Cancel execution"
+              >
+                <X className="h-3 w-3" />
+              </Button>
             </div>
           </div>
         )}
@@ -282,7 +343,11 @@ export const AutomationItem: React.FC<AutomationItemProps> = ({
                 <span className="font-medium">
                   {automation.patternType === "navigation"
                     ? "Navigation Pattern"
-                    : "Form Pattern"}
+                    : automation.patternType === "form"
+                      ? "Form Pattern"
+                      : automation.patternType === "copy-paste"
+                        ? "Copy-Paste Pattern"
+                        : "Unknown Pattern"}
                 </span>
               </div>
               {getStepPreview()}

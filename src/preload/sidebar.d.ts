@@ -216,12 +216,15 @@ interface SidebarAPI {
       description?: string;
     }) => Promise<PatternAPIResponse>;
     delete: (automationId: string) => Promise<PatternAPIResponse>;
+    // Story 1.16: Cancel automation execution
+    cancel: () => Promise<PatternAPIResponse>;
     onProgress: (
       callback: (data: {
         automationId: string;
         currentStep: number;
         totalSteps: number;
         stepDescription: string;
+        screenshot?: string; // AC 5: Screenshot thumbnail for progress display
       }) => void,
     ) => void;
     removeProgressListener: () => void;

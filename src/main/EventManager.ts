@@ -548,12 +548,14 @@ export class EventManager {
           step: number,
           total: number,
           description: string,
+          screenshotBase64?: string,
         ): void => {
           this.mainWindow.sidebar.view.webContents.send("automation:progress", {
             automationId: validated.automation_id,
             currentStep: step,
             totalSteps: total,
             stepDescription: description,
+            screenshot: screenshotBase64, // AC 5: Include screenshot thumbnail for UI display
           });
         };
 
@@ -878,7 +880,7 @@ export class EventManager {
       }
     });
 
-    // Story 1.14: Cancel execution
+    // Story 1.14/1.16: Cancel execution
     ipcMain.handle("pattern:cancel-execution", async (_, data) => {
       try {
         // Rate limiting (10 requests/second)
@@ -892,18 +894,33 @@ export class EventManager {
           };
         }
 
-        // Zod validation
-        CancelExecutionSchema.parse(data);
+        // Zod validation (optional data parameter)
+        if (data) {
+          CancelExecutionSchema.parse(data);
+        }
 
-        // TODO: Story 1.16 - LLM-guided execution not implemented yet
-        // Temporary error response until Story 1.16 is complete
-        return {
-          success: false,
-          error: {
-            code: "NOT_IMPLEMENTED",
-            message: "LLM-guided execution will be implemented in Story 1.16",
-          },
-        };
+        // Story 1.16: Call PatternManager to cancel current execution
+        const cancelledAutomationId = patternManager.cancelExecution();
+        if (cancelledAutomationId) {
+          // Immediately emit completion event to update UI (don't wait for in-flight LLM request)
+          // The actual execution will finish asynchronously, but UI should update now
+          this.mainWindow.sidebar.view.webContents.send("automation:complete", {
+            automationId: cancelledAutomationId,
+            success: false,
+            stepsExecuted: 0,
+            error: "Execution cancelled by user",
+          });
+
+          return { success: true };
+        } else {
+          return {
+            success: false,
+            error: {
+              code: "NO_EXECUTION",
+              message: "No automation execution in progress",
+            },
+          };
+        }
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
@@ -917,7 +934,7 @@ export class EventManager {
         return {
           success: false,
           error: {
-            code: "UNKNOWN_ERROR",
+            code: "CANCEL_ERROR",
             message: error instanceof Error ? error.message : "Unknown error",
           },
         };

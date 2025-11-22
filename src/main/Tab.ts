@@ -755,7 +755,7 @@ export class Tab {
               align-items: flex-start !important;
               justify-content: center !important;
               padding-top: 60px !important;
-              pointer-events: auto !important;
+              pointer-events: none !important;
               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
             }
             #__blueberry-automation-badge {
@@ -770,6 +770,7 @@ export class Tab {
               align-items: center !important;
               gap: 10px !important;
               animation: __blueberry_slideDown 0.3s ease-out !important;
+              pointer-events: auto !important;
             }
             @keyframes __blueberry_slideDown {
               from { opacity: 0; transform: translateY(-20px); }
@@ -795,10 +796,8 @@ export class Tab {
           const body = document.body || document.getElementsByTagName('body')[0] || document.documentElement;
           body.appendChild(overlay);
 
-          // Prevent user interactions
-          overlay.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); }, true);
-          overlay.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); }, true);
-          overlay.addEventListener('keydown', (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+          // Note: We use pointer-events: none on the overlay to allow automation clicks to pass through
+          // The badge itself has pointer-events: auto so it's visible but non-interactive
         })();
       `);
     } catch (error) {

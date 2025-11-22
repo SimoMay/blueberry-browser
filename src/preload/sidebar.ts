@@ -251,12 +251,16 @@ const sidebarAPI = {
     delete: (automationId: string) =>
       electronAPI.ipcRenderer.invoke("pattern:delete-automation", automationId),
 
+    // Story 1.16: Cancel automation execution
+    cancel: () => electronAPI.ipcRenderer.invoke("pattern:cancel-execution"),
+
     onProgress: (
       callback: (data: {
         automationId: string;
         currentStep: number;
         totalSteps: number;
         stepDescription: string;
+        screenshot?: string; // AC 5: Screenshot thumbnail for progress display
       }) => void,
     ) => {
       electronAPI.ipcRenderer.on("automation:progress", (_, data) =>

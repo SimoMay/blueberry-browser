@@ -167,6 +167,8 @@ export class PatternManager {
   private copyEventCleanupInterval: NodeJS.Timeout | null = null; // Story 1.7b
   private sessionActions: SessionAction[] = []; // Story 1.15 - Session tracking for LLM context
   private lastLLMCallTimestamps: Map<string, number> = new Map(); // Story 1.15 - Rate limiting for LLM calls
+  private currentExecutionEngine: { cancel: () => void } | null = null; // Story 1.16 - Track current execution for cancellation
+  private currentExecutionId: string | null = null; // Story 1.16 - Track automation ID for immediate cancel feedback
 
   private constructor() {
     // Private constructor for singleton pattern
@@ -617,15 +619,20 @@ export class PatternManager {
   }
 
   /**
-   * Execute an automation using AutomationExecutor
+   * Execute an automation using LLMExecutionEngine
+   * Story 1.16: LLM-guided execution with page-by-page AI decisions
    * Returns execution result with steps completed and duration
    */
   public async executeAutomation(
     automationId: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     _window: any, // Window instance passed from EventManager (circular dependency prevents proper typing)
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _onProgress?: (step: number, total: number, description: string) => void,
+    onProgress?: (
+      step: number,
+      total: number,
+      description: string,
+      screenshotBase64?: string,
+    ) => void,
   ): Promise<
     IPCResponse<{ stepsExecuted: number; duration: number; error?: string }>
   > {
@@ -636,11 +643,16 @@ export class PatternManager {
 
       log.info("[PatternManager] Execute automation:", automationId);
 
-      // Fetch automation from database
+      // Fetch automation from database with full details
+      // Also fetch pattern data to extract starting URL from original actions
       const stmt = this.db.prepare(`
         SELECT
           a.id,
+          a.name,
+          a.description,
           a.pattern_data as patternData,
+          p.intent_summary as intentSummary,
+          p.pattern_data as originalPatternData,
           p.type as patternType
         FROM automations a
         LEFT JOIN patterns p ON a.pattern_id = p.id
@@ -650,8 +662,12 @@ export class PatternManager {
       const automation = stmt.get(automationId) as
         | {
             id: string;
+            name: string;
+            description?: string;
             patternData: string;
-            patternType: "navigation" | "form";
+            intentSummary?: string;
+            originalPatternData?: string;
+            patternType?: string;
           }
         | undefined;
 
@@ -659,20 +675,198 @@ export class PatternManager {
         throw new Error("Automation not found");
       }
 
-      // TODO: Story 1.16 - LLM-guided execution not implemented yet
-      // Temporary error response until Story 1.16 is complete
-      log.warn(
-        `[PatternManager] Automation execution requested but not yet implemented: ${automationId}`,
-      );
+      // Parse workflow to extract start URL
+      const workflow = JSON.parse(automation.patternData);
+      let startUrl: string | null = null;
 
-      return {
-        success: false,
-        error: {
-          code: "NOT_IMPLEMENTED",
-          message:
-            "LLM-guided automation execution will be implemented in Story 1.16",
-        },
-      };
+      // Extract start URL from workflow (check multiple formats)
+      if (workflow && typeof workflow === "object") {
+        const workflowObj = workflow as Record<string, unknown>;
+
+        // Format 1: workflow.startUrl (top-level field added by Story 1.15)
+        if (typeof workflowObj.startUrl === "string") {
+          startUrl = workflowObj.startUrl;
+        }
+        // Format 2: workflow.steps[0].url (Story 1.15 navigation patterns)
+        else if (
+          Array.isArray(workflowObj.steps) &&
+          workflowObj.steps.length > 0
+        ) {
+          const firstStep = workflowObj.steps[0] as Record<string, unknown>;
+          if (typeof firstStep.url === "string") {
+            startUrl = firstStep.url;
+          }
+          // Fallback: Check if any step has a URL (first navigation action)
+          else {
+            for (const step of workflowObj.steps) {
+              const stepObj = step as Record<string, unknown>;
+              if (
+                typeof stepObj.url === "string" &&
+                stepObj.url.startsWith("http")
+              ) {
+                startUrl = stepObj.url;
+                log.info(
+                  "[PatternManager] Using URL from first navigation step:",
+                  startUrl,
+                );
+                break;
+              }
+            }
+          }
+        }
+        // Format 3: workflow.sequence[0].url (Story 1.15 alternative format)
+        else if (
+          Array.isArray(workflowObj.sequence) &&
+          workflowObj.sequence.length > 0
+        ) {
+          const firstItem = workflowObj.sequence[0] as Record<string, unknown>;
+          startUrl = typeof firstItem.url === "string" ? firstItem.url : null;
+        }
+      }
+
+      // Fallback: Extract URL from original pattern data (navigation/copy-paste actions)
+      if (!startUrl && automation.originalPatternData) {
+        try {
+          const patternData = JSON.parse(automation.originalPatternData);
+          log.info("[PatternManager] Parsed original pattern data:", {
+            patternType: automation.patternType,
+            hasSteps: Array.isArray(patternData.steps),
+            stepsCount: Array.isArray(patternData.steps)
+              ? patternData.steps.length
+              : 0,
+            patternDataKeys: Object.keys(patternData),
+          });
+
+          // For navigation patterns, extract first navigation URL
+          if (
+            automation.patternType === "navigation" &&
+            Array.isArray(patternData.steps)
+          ) {
+            const firstNav = patternData.steps.find(
+              (step: { url?: string }) =>
+                step.url && step.url.startsWith("http"),
+            );
+            if (firstNav && firstNav.url) {
+              startUrl = firstNav.url;
+              log.info(
+                "[PatternManager] Using URL from first navigation step:",
+                startUrl,
+              );
+            }
+          }
+
+          // For copy-paste patterns, extract source URL (first copy step)
+          if (
+            automation.patternType === "copy-paste" &&
+            Array.isArray(patternData.steps)
+          ) {
+            log.info("[PatternManager] Looking for sourceUrl in copy steps:", {
+              firstStep: patternData.steps[0],
+            });
+            const firstCopy = patternData.steps.find(
+              (step: { sourceUrl?: string }) =>
+                step.sourceUrl && step.sourceUrl.startsWith("http"),
+            );
+            if (firstCopy && firstCopy.sourceUrl) {
+              startUrl = firstCopy.sourceUrl;
+              log.info(
+                "[PatternManager] Using URL from first copy step:",
+                startUrl,
+              );
+            }
+          }
+        } catch (error) {
+          log.error(
+            "[PatternManager] Failed to parse original pattern data:",
+            error,
+          );
+        }
+      }
+
+      // Warn if no start URL found (workflow may be invalid or cross-tab pattern)
+      if (!startUrl) {
+        log.warn(
+          "[PatternManager] No start URL found in workflow - will default to Google",
+          {
+            automationId,
+            workflowKeys: workflow ? Object.keys(workflow) : [],
+            patternType: automation.patternType,
+          },
+        );
+      }
+
+      // Create new tab for automation execution
+      const automationTab = _window.createTab(startUrl || undefined);
+
+      // Switch to the new tab so user can watch the automation
+      _window.switchActiveTab(automationTab.id);
+
+      // Import LLMExecutionEngine dynamically to avoid circular dependency
+      const { LLMExecutionEngine } = await import("./LLMExecutionEngine");
+      const executionEngine = new LLMExecutionEngine();
+
+      // Track execution engine and ID for cancellation (Story 1.16)
+      this.currentExecutionEngine = executionEngine;
+      this.currentExecutionId = automationId;
+
+      // Enable automation mode (blue haze overlay)
+      automationTab.setAutomationMode(true);
+
+      try {
+        // Execute automation with LLM guidance (Story 1.16)
+        const result = await executionEngine.executeAutomation(
+          {
+            id: automation.id,
+            name: automation.name,
+            description: automation.description,
+            intentSummary: automation.intentSummary,
+            workflow: undefined, // Will be parsed from patternData
+            patternData: automation.patternData,
+          },
+          automationTab,
+          onProgress,
+        );
+
+        // Update execution statistics if successful
+        if (result.success) {
+          const updateStmt = this.db.prepare(`
+          UPDATE automations
+          SET execution_count = execution_count + 1,
+              last_executed = ?
+          WHERE id = ?
+        `);
+
+          updateStmt.run(Date.now(), automationId);
+
+          log.info("[PatternManager] Automation execution complete", {
+            automationId,
+            stepsExecuted: result.stepsExecuted,
+            duration: result.duration,
+          });
+        }
+
+        return {
+          success: result.success,
+          data: {
+            stepsExecuted: result.stepsExecuted,
+            duration: result.duration,
+            error: result.error,
+          },
+          error: result.error
+            ? {
+                code: "EXECUTION_ERROR",
+                message: result.error,
+              }
+            : undefined,
+        };
+      } finally {
+        // Disable automation mode (remove blue haze overlay)
+        automationTab.setAutomationMode(false);
+
+        // Clear execution engine reference and ID (Story 1.16)
+        this.currentExecutionEngine = null;
+        this.currentExecutionId = null;
+      }
     } catch (error) {
       log.error("[PatternManager] Execute automation error:", error);
       return {
@@ -683,6 +877,19 @@ export class PatternManager {
         },
       };
     }
+  }
+
+  /**
+   * Cancel currently executing automation (Story 1.16)
+   * Returns automation ID if cancelled, null if no execution in progress
+   */
+  public cancelExecution(): string | null {
+    if (this.currentExecutionEngine && this.currentExecutionId) {
+      this.currentExecutionEngine.cancel();
+      log.info("[PatternManager] Automation execution cancelled");
+      return this.currentExecutionId;
+    }
+    return null;
   }
 
   /**
