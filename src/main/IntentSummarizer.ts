@@ -1,7 +1,4 @@
-import { generateText } from "ai";
-import { openai } from "@ai-sdk/openai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
+import { generateObject } from "ai";
 import log from "electron-log";
 import type Database from "better-sqlite3";
 import type {
@@ -9,6 +6,24 @@ import type {
   FormPattern,
   CopyPastePattern,
 } from "./PatternManager";
+import { z } from "zod";
+import { LLMProviderConfig } from "./LLMProviderConfig";
+
+/**
+ * Zod schema for dual intent summaries (AC-2: Use generateObject() with Zod schema)
+ */
+const DualSummariesSchema = z.object({
+  short: z
+    .string()
+    .describe("20-30 word summary for notifications, starting with -ing verb"),
+  detailed: z
+    .string()
+    .describe(
+      "40-50 word summary for chat in second person (you/your), explaining what and why",
+    ),
+});
+
+type DualSummaries = z.infer<typeof DualSummariesSchema>;
 
 /**
  * Pattern data structure from database
@@ -31,12 +46,6 @@ interface PatternData {
  * - NO fallback templates - pattern analysis fails if LLM unavailable
  * - Cost optimization: GPT-4o-mini or Claude Haiku (<$0.01 per pattern)
  */
-// Default models per provider (matching LLMClient.ts pattern)
-const DEFAULT_MODELS: Record<string, string> = {
-  openai: "gpt-4o-mini",
-  anthropic: "claude-3-5-sonnet-20241022",
-  gemini: "gemini-1.5-flash",
-};
 
 /**
  * Cache TTL in milliseconds (1 hour)
@@ -48,34 +57,12 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 3600000ms = 1 hour
 export class IntentSummarizer {
   private static instance: IntentSummarizer | null = null;
   private db: Database.Database;
-  private provider: "openai" | "anthropic" | "gemini";
-  private modelName: string;
+  private config: LLMProviderConfig;
 
   private constructor(db: Database.Database) {
     this.db = db;
-    this.provider = this.getProvider();
-    this.modelName = this.getModelName();
-
-    log.info(
-      `[IntentSummarizer] Initialized with provider: ${this.provider}, model: ${this.modelName}`,
-    );
-  }
-
-  /**
-   * Get provider from environment (matches LLMClient.ts pattern)
-   */
-  private getProvider(): "openai" | "anthropic" | "gemini" {
-    const provider = process.env.LLM_PROVIDER?.toLowerCase();
-    if (provider === "anthropic") return "anthropic";
-    if (provider === "gemini") return "gemini";
-    return "openai"; // Default to OpenAI
-  }
-
-  /**
-   * Get model name from environment or use defaults (matches LLMClient.ts pattern)
-   */
-  private getModelName(): string {
-    return process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
+    // AC-4: Use centralized LLMProviderConfig instead of duplicated code
+    this.config = new LLMProviderConfig(false); // Use standard models, not vision models
   }
 
   /**
@@ -89,23 +76,18 @@ export class IntentSummarizer {
   }
 
   /**
-   * Summarize pattern intent using LLM with caching and retry logic
+   * Summarize pattern intent using LLM with caching
    * Story 1.12 - AC 1: Single LLM call per pattern, cached for 1 hour
    * Story 1.19 - AC 1, 4: Exponential backoff retry, no template fallbacks
+   * AC-2, AC-3: Use generateObject() with Zod schema, SDK handles retries
    * Generates both short (notification) and detailed (chat) summaries
    */
-  public async summarizePattern(
-    patternId: string,
-    retryCount: number = 0,
-  ): Promise<{
+  public async summarizePattern(patternId: string): Promise<{
     success: boolean;
     short?: string;
     detailed?: string;
     error?: string;
   }> {
-    const MAX_RETRIES = 3;
-    const RETRY_DELAYS = [2000, 4000, 8000]; // Exponential backoff: 2s, 4s, 8s
-
     try {
       // Check cache first (Story 1.12 - AC 3)
       const cached = this.getCachedSummary(patternId);
@@ -129,11 +111,9 @@ export class IntentSummarizer {
       // Build prompt with enhanced context (Story 1.12 - AC 1)
       const prompt = this.buildPrompt(patternData);
 
-      // Call LLM (Story 1.12 - AC 1, 6) - single call for both summaries
-      const response = await this.callLLM(prompt);
-
-      // Parse dual summaries from response
-      const summaries = this.parseDualSummaries(response);
+      // AC-2: Call LLM with generateObject() - returns structured data directly
+      // AC-3: SDK handles retries automatically with maxRetries: 3
+      const summaries = await this.callLLM(prompt);
 
       // Cache both summaries (Story 1.12 - AC 3)
       this.cacheSummary(patternId, summaries.short, summaries.detailed);
@@ -148,31 +128,13 @@ export class IntentSummarizer {
         detailed: summaries.detailed,
       };
     } catch (error) {
-      // Story 1.19 - AC 4: Log error with full context
-      log.error("[IntentSummarizer] LLM analysis failed", {
+      // AC-3: Error handling updated for SDK retry failures
+      log.error("[IntentSummarizer] LLM analysis failed after SDK retries", {
         patternId,
-        attempt: retryCount + 1,
-        maxRetries: MAX_RETRIES,
         error: error instanceof Error ? error.message : String(error),
       });
 
-      // Story 1.19 - AC 4: Retry with exponential backoff
-      if (retryCount < MAX_RETRIES) {
-        const delay = RETRY_DELAYS[retryCount];
-        log.info(
-          `[IntentSummarizer] Retrying in ${delay}ms (attempt ${retryCount + 2}/${MAX_RETRIES + 1})`,
-        );
-
-        await this.delay(delay);
-        return this.summarizePattern(patternId, retryCount + 1);
-      }
-
-      // Story 1.19 - AC 1, 4: All retries exhausted - return failure (NO template fallback)
-      log.error("[IntentSummarizer] LLM analysis failed after retries", {
-        patternId,
-        attempts: MAX_RETRIES + 1,
-      });
-
+      // Story 1.19 - AC 1, 4: All SDK retries exhausted - return failure (NO template fallback)
       return {
         success: false,
         error:
@@ -181,12 +143,7 @@ export class IntentSummarizer {
     }
   }
 
-  /**
-   * Delay helper for exponential backoff retry
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
+  // AC-3: Removed manual retry logic and delay() helper - SDK now handles retries with exponential backoff
 
   /**
    * Get cached summaries if valid (within 1 hour)
@@ -460,32 +417,7 @@ SHORT: [your 20-30 word description]
 DETAILED: [your 40-50 word description]`;
   }
 
-  /**
-   * Parse dual summaries from LLM response
-   */
-  private parseDualSummaries(response: string): {
-    short: string;
-    detailed: string;
-  } {
-    try {
-      // Extract SHORT and DETAILED using regex
-      const shortMatch = response.match(/SHORT:\s*(.+?)(?=\n|DETAILED:|$)/is);
-      const detailedMatch = response.match(/DETAILED:\s*(.+?)$/is);
-
-      const short = shortMatch
-        ? shortMatch[1].trim()
-        : response.split("\n")[0].trim();
-      const detailed = detailedMatch
-        ? detailedMatch[1].trim()
-        : response.trim();
-
-      return { short, detailed };
-    } catch (error) {
-      log.warn("[IntentSummarizer] Failed to parse dual summaries:", error);
-      // Fallback: use entire response for both
-      return { short: response.trim(), detailed: response.trim() };
-    }
-  }
+  // AC-2: Removed parseDualSummaries() method - generateObject() handles parsing and validation automatically
 
   /**
    * Convert camelCase or snake_case field names to human-readable format
@@ -510,36 +442,25 @@ DETAILED: [your 40-50 word description]`;
   }
 
   /**
-   * Call LLM with cost optimization settings
+   * Call LLM with cost optimization settings using generateObject() for structured output
    * Story 1.12 - AC 1, 6: Temperature 0.3, concise prompt for cost control
+   * AC-2: Use generateObject() with Zod schema instead of manual text parsing
+   * AC-4: Use LLMProviderConfig for model initialization
    */
-  private async callLLM(prompt: string): Promise<string> {
-    const apiKey = this.getApiKey();
-    if (!apiKey) {
+  private async callLLM(prompt: string): Promise<DualSummaries> {
+    // AC-4: Use centralized config to initialize model
+    const model = this.config.initializeModel();
+    if (!model) {
       throw new Error(
-        `${this.provider.toUpperCase()}_API_KEY not found in environment`,
+        `${this.config.getProvider().toUpperCase()}_API_KEY not found in environment`,
       );
     }
 
-    // Set Gemini API key as environment variable (required by @ai-sdk/google)
-    if (this.provider === "gemini") {
-      process.env.GOOGLE_GENERATIVE_AI_API_KEY = apiKey;
-    }
-
-    // Initialize model (models are initialized without apiKey parameter in constructor)
-    let model;
-    if (this.provider === "anthropic") {
-      model = anthropic(this.modelName);
-    } else if (this.provider === "gemini") {
-      model = google(this.modelName);
-    } else {
-      model = openai(this.modelName);
-    }
-
-    // Call LLM with cost-optimized settings
-    const { text } = await generateText({
+    // AC-2: Use generateObject() with Zod schema for structured output
+    const { object } = await generateObject({
       model,
       prompt,
+      schema: DualSummariesSchema,
       /**
        * Temperature: 0.3 (Deterministic - Intent Summarization)
        * Rationale: Low temperature generates consistent, predictable summaries for
@@ -548,26 +469,18 @@ DETAILED: [your 40-50 word description]`;
        * for identical workflows, confusing users.
        */
       temperature: 0.3,
-      // Note: maxTokens not available in generateText - control via prompt instead
+      maxRetries: 3, // AC-3: SDK handles retries automatically
     });
 
-    log.info(`[IntentSummarizer] LLM response: "${text}"`);
+    log.info("[IntentSummarizer] LLM response (structured)", {
+      short: object.short?.substring(0, 50),
+      detailed: object.detailed?.substring(0, 50),
+    });
 
-    return text.trim();
+    return object;
   }
 
-  /**
-   * Get API key for configured provider
-   */
-  private getApiKey(): string | undefined {
-    if (this.provider === "anthropic") {
-      return process.env.ANTHROPIC_API_KEY;
-    } else if (this.provider === "gemini") {
-      return process.env.GEMINI_API_KEY;
-    } else {
-      return process.env.OPENAI_API_KEY;
-    }
-  }
+  // AC-4: Removed getProvider(), getModelName(), getApiKey() methods - now handled by LLMProviderConfig
 
   /**
    * Cache summaries in database

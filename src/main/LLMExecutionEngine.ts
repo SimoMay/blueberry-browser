@@ -1,8 +1,6 @@
-import { generateText, type LanguageModel, type CoreMessage } from "ai";
-import { openai } from "@ai-sdk/openai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
+import { generateObject, type LanguageModel, type UserModelMessage } from "ai";
 import log from "electron-log";
+import { LLMProviderConfig } from "./LLMProviderConfig";
 import type { Tab } from "./Tab";
 import {
   LLMExecutionStepSchema,
@@ -90,6 +88,7 @@ interface AutomationData {
  */
 export class LLMExecutionEngine {
   private model: LanguageModel | null = null;
+  private config: LLMProviderConfig;
   private executionHistory: ExecutionHistoryEntry[] = [];
   private isCancelled = false;
   private readonly requestTimeout = 30000; // 30 seconds max per LLM call (vision models can be slow)
@@ -105,81 +104,12 @@ export class LLMExecutionEngine {
   ) => void;
 
   constructor() {
-    this.model = this.initializeModel();
+    // AC-4: Use centralized LLMProviderConfig with vision models
+    this.config = new LLMProviderConfig(true); // Use vision-capable models
+    this.model = this.config.initializeModel();
   }
 
-  /**
-   * Initialize vision-capable LLM model (GPT-4o, Claude Sonnet, or Gemini Pro)
-   * AC 1: Uses vision-capable model for screenshot analysis
-   */
-  private initializeModel(): LanguageModel | null {
-    try {
-      const provider = this.getProvider();
-      const modelName = this.getModelName(provider);
-      const apiKey = this.getApiKey(provider);
-
-      if (!apiKey) {
-        log.error(
-          `[LLMExecutionEngine] API key not found for provider: ${provider}`,
-        );
-        return null;
-      }
-
-      // Set environment variable for Gemini (required by @ai-sdk/google)
-      if (provider === "gemini") {
-        process.env.GOOGLE_GENERATIVE_AI_API_KEY = apiKey;
-      }
-
-      switch (provider) {
-        case "anthropic":
-          return anthropic(modelName);
-        case "openai":
-          return openai(modelName);
-        case "gemini":
-          return google(modelName);
-        default:
-          return null;
-      }
-    } catch (error) {
-      log.error("[LLMExecutionEngine] Model initialization failed:", error);
-      return null;
-    }
-  }
-
-  private getProvider(): "openai" | "anthropic" | "gemini" {
-    const provider = process.env.LLM_PROVIDER?.toLowerCase();
-    if (provider === "anthropic") return "anthropic";
-    if (provider === "gemini") return "gemini";
-    return "openai"; // Default to OpenAI
-  }
-
-  private getModelName(provider: "openai" | "anthropic" | "gemini"): string {
-    const envModel = process.env.LLM_MODEL;
-    if (envModel) return envModel;
-
-    // Default vision-capable models (AC 1)
-    const defaults = {
-      openai: "gpt-4o", // Vision-capable
-      anthropic: "claude-3-5-sonnet-20241022", // Vision-capable
-      gemini: "gemini-1.5-pro", // Vision-capable (using Pro for better accuracy)
-    };
-    return defaults[provider];
-  }
-
-  private getApiKey(
-    provider: "openai" | "anthropic" | "gemini",
-  ): string | undefined {
-    switch (provider) {
-      case "anthropic":
-        return process.env.ANTHROPIC_API_KEY;
-      case "openai":
-        return process.env.OPENAI_API_KEY;
-      case "gemini":
-        return process.env.GEMINI_API_KEY;
-      default:
-        return undefined;
-    }
-  }
+  // AC-4: Removed initializeModel(), getProvider(), getModelName(), getApiKey() methods - now handled by LLMProviderConfig
 
   /**
    * Execute automation with LLM-guided decisions
@@ -420,6 +350,7 @@ export class LLMExecutionEngine {
    * Get LLM decision for next action (with vision)
    * AC 1: LLM receives workflow, screenshot, page context, execution history
    * AC 4: Error handling with retry logic
+   * AC-2, AC-3: Use generateObject() with Zod schema, SDK handles retries
    */
   private async getLLMDecision(
     automationData: AutomationData,
@@ -438,7 +369,7 @@ export class LLMExecutionEngine {
       const screenshotBase64 = resized.toDataURL();
 
       // Build messages with vision
-      const messages: CoreMessage[] = [
+      const messages: UserModelMessage[] = [
         {
           role: "user",
           content: [
@@ -454,8 +385,9 @@ export class LLMExecutionEngine {
         },
       ];
 
-      // Call LLM with timeout (AC 1: <5 seconds)
-      const response = await Promise.race([
+      // AC-2: Call LLM with generateObject() for structured output (returns object directly)
+      // AC-3: SDK handles retries automatically with maxRetries: 3
+      const step = await Promise.race([
         this.callLLM(messages),
         new Promise<never>((_, reject) =>
           setTimeout(
@@ -464,9 +396,6 @@ export class LLMExecutionEngine {
           ),
         ),
       ]);
-
-      // Parse and validate response (AC 1)
-      const step = this.parseLLMStep(response);
 
       log.info("[LLMExecutionEngine] LLM decision", {
         action: step.nextAction,
@@ -477,64 +406,35 @@ export class LLMExecutionEngine {
 
       return step;
     } catch (error) {
-      log.error("[LLMExecutionEngine] LLM decision failed", error);
-
-      // Retry once with exponential backoff (AC 4)
-      log.info("[LLMExecutionEngine] Retrying LLM call after 2s...");
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      try {
-        const prompt = this.buildLLMPrompt(automationData, workflow, pageState);
-        const screenshot = await activeTab.screenshot();
-        // Resize for faster vision processing and reduced tokens
-        const resized = screenshot.resize({ width: SCREENSHOT_VISION_WIDTH });
-        const screenshotBase64 = resized.toDataURL();
-
-        const messages: CoreMessage[] = [
-          {
-            role: "user",
-            content: [
-              {
-                type: "image",
-                image: screenshotBase64,
-              },
-              {
-                type: "text",
-                text: prompt,
-              },
-            ],
-          },
-        ];
-
-        const response = await this.callLLM(messages);
-        const step = this.parseLLMStep(response);
-
-        log.info("[LLMExecutionEngine] Retry successful", {
-          action: step.nextAction,
-        });
-
-        return step;
-      } catch (retryError) {
-        log.error("[LLMExecutionEngine] Retry failed", retryError);
-        // AC 4: User-friendly error message
-        throw new Error(
-          "Automation paused - AI guidance unavailable. Please retry.",
-        );
-      }
+      log.error(
+        "[LLMExecutionEngine] LLM decision failed after SDK retries",
+        error,
+      );
+      // AC 4: User-friendly error message
+      throw new Error(
+        "Automation paused - AI guidance unavailable. Please retry.",
+      );
     }
   }
 
+  // AC-3: Removed manual retry logic - SDK now handles retries with exponential backoff
+
   /**
-   * Call LLM API with vision support
+   * Call LLM API with vision support using generateObject() for structured output
+   * AC-2: Use generateObject() with Zod schema instead of manual JSON parsing
    */
-  private async callLLM(messages: CoreMessage[]): Promise<string> {
+  private async callLLM(
+    messages: UserModelMessage[],
+  ): Promise<LLMExecutionStep> {
     if (!this.model) {
       throw new Error("LLM model not initialized");
     }
 
-    const result = await generateText({
+    // AC-2: Use generateObject() with Zod schema for structured output
+    const result = await generateObject({
       model: this.model,
       messages,
+      schema: LLMExecutionStepSchema,
       /**
        * Temperature: 0.3 (Deterministic - Workflow Execution)
        * Rationale: Low temperature ensures consistent, reliable automation execution.
@@ -543,12 +443,10 @@ export class LLMExecutionEngine {
        * same workflow to execute differently each time (unreliable automation).
        */
       temperature: 0.3,
-      maxRetries: 0, // We handle retries manually
-      // Note: maxTokens not available in current AI SDK version
-      // Response length naturally limited by JSON format constraint
+      maxRetries: 3, // AC-3: SDK handles retries automatically
     });
 
-    return result.text;
+    return result.object;
   }
 
   /**
@@ -697,40 +595,7 @@ COMPLETION RULES:
 Return ONLY valid JSON, no markdown code blocks.`;
   }
 
-  /**
-   * Parse and validate LLM response
-   * AC 1: Validates LLM response structure with Zod
-   * Enhanced to extract JSON even if there's text before/after
-   */
-  private parseLLMStep(response: string): LLMExecutionStep {
-    try {
-      let cleanedResponse = response.trim();
-
-      // Try to extract JSON from markdown code blocks first
-      const codeBlockMatch = cleanedResponse.match(
-        /```json?\s*\n?([\s\S]*?)\n?```/i,
-      );
-      if (codeBlockMatch) {
-        cleanedResponse = codeBlockMatch[1].trim();
-      } else {
-        // Try to find JSON object anywhere in the response
-        const jsonMatch = cleanedResponse.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          cleanedResponse = jsonMatch[0];
-        }
-      }
-
-      const json = JSON.parse(cleanedResponse);
-      const validated = LLMExecutionStepSchema.parse(json);
-      return validated;
-    } catch (error) {
-      log.error("[LLMExecutionEngine] Failed to parse LLM response", error);
-      log.error("[LLMExecutionEngine] Raw response:", response);
-      throw new Error(
-        "Invalid LLM response format. Please check logs for details.",
-      );
-    }
-  }
+  // AC-2: Removed parseLLMStep() method - generateObject() handles JSON parsing and validation automatically
 
   /**
    * Execute action based on LLM decision

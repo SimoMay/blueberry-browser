@@ -6,12 +6,10 @@ import {
   type LanguageModel,
   type CoreMessage,
 } from "ai";
-import { openai } from "@ai-sdk/openai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
+import { LLMProviderConfig } from "./LLMProviderConfig";
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -26,14 +24,6 @@ interface StreamChunk {
   isComplete: boolean;
 }
 
-type LLMProvider = "openai" | "anthropic" | "gemini";
-
-const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  openai: "gpt-4o-mini",
-  anthropic: "claude-3-5-sonnet-20241022",
-  gemini: "gemini-1.5-flash",
-};
-
 const MAX_CONTEXT_LENGTH = 4000;
 
 /**
@@ -45,19 +35,34 @@ const MAX_CONTEXT_LENGTH = 4000;
  */
 const DEFAULT_TEMPERATURE = 0.7;
 
+/**
+ * LLMClient - Multi-provider AI client for chat and content generation
+ *
+ * Features:
+ * - Multi-provider support: OpenAI (gpt-4o-mini), Anthropic (Claude Sonnet 4.5), Gemini (Flash 1.5)
+ * - Streaming chat responses with real-time sidebar updates
+ * - Screenshot and page context injection for multimodal conversations
+ * - Message history management for contextual conversations
+ * - Temperature: 0.7 for natural, engaging conversational responses
+ *
+ * Architecture:
+ * - Uses Vercel AI SDK (generateText, streamText) for provider abstraction
+ * - Injects active tab screenshot as first image in multimodal requests
+ * - Truncates page text to 4000 chars to balance context and token cost
+ * - Streams responses token-by-token to sidebar for responsive UX
+ */
 export class LLMClient {
   private readonly webContents: WebContents;
   private window: Window | null = null;
-  private readonly provider: LLMProvider;
-  private readonly modelName: string;
+  private readonly config: LLMProviderConfig;
   private readonly model: LanguageModel | null;
   private messages: CoreMessage[] = [];
 
   constructor(webContents: WebContents) {
     this.webContents = webContents;
-    this.provider = this.getProvider();
-    this.modelName = this.getModelName();
-    this.model = this.initializeModel();
+    // AC-4: Use centralized LLMProviderConfig instead of duplicated code
+    this.config = new LLMProviderConfig(false); // Use standard models for chat
+    this.model = this.config.initializeModel();
 
     this.logInitializationStatus();
   }
@@ -77,61 +82,16 @@ export class LLMClient {
     return this.model;
   }
 
-  private getProvider(): LLMProvider {
-    const provider = process.env.LLM_PROVIDER?.toLowerCase();
-    if (provider === "anthropic") return "anthropic";
-    if (provider === "gemini") return "gemini";
-    return "openai"; // Default to OpenAI
-  }
-
-  private getModelName(): string {
-    return process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
-  }
-
-  private initializeModel(): LanguageModel | null {
-    const apiKey = this.getApiKey();
-    if (!apiKey) return null;
-
-    // Set environment variable for Gemini (required by @ai-sdk/google)
-    if (this.provider === "gemini") {
-      process.env.GOOGLE_GENERATIVE_AI_API_KEY = apiKey;
-    }
-
-    switch (this.provider) {
-      case "anthropic":
-        return anthropic(this.modelName);
-      case "openai":
-        return openai(this.modelName);
-      case "gemini":
-        return google(this.modelName);
-      default:
-        return null;
-    }
-  }
-
-  private getApiKey(): string | undefined {
-    switch (this.provider) {
-      case "anthropic":
-        return process.env.ANTHROPIC_API_KEY;
-      case "openai":
-        return process.env.OPENAI_API_KEY;
-      case "gemini":
-        return process.env.GEMINI_API_KEY;
-      default:
-        return undefined;
-    }
-  }
-
   private logInitializationStatus(): void {
     if (this.model) {
       log.info(
-        `✅ LLM Client initialized with ${this.provider} provider using model: ${this.modelName}`,
+        `✅ LLM Client initialized with ${this.config.getProvider()} provider using model: ${this.config.getModel()}`,
       );
     } else {
       const keyName =
-        this.provider === "anthropic"
+        this.config.getProvider() === "anthropic"
           ? "ANTHROPIC_API_KEY"
-          : this.provider === "gemini"
+          : this.config.getProvider() === "gemini"
             ? "GEMINI_API_KEY"
             : "OPENAI_API_KEY";
       log.error(
@@ -140,6 +100,8 @@ export class LLMClient {
       );
     }
   }
+
+  // AC-4: Removed getProvider(), getModelName(), initializeModel(), getApiKey() methods - now handled by LLMProviderConfig
 
   async sendChatMessage(request: ChatRequest): Promise<void> {
     try {

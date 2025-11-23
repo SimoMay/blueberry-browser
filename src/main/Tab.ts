@@ -14,6 +14,7 @@ export class Tab {
   private formSubmissionTimestamps: number[] = []; // Track timestamps for rate limiting
   private _window?: Window; // Reference to parent window (set after construction)
   private _isRecordingMode: boolean = false; // Flag for recording overlay
+  private _isDestroyed: boolean = false; // Track destruction state for cleanup
 
   constructor(id: string, url: string = "https://www.google.com") {
     this._id = id;
@@ -532,8 +533,8 @@ export class Tab {
             return fields;
           }
 
-          // Listen for form submissions
-          document.addEventListener('submit', (event) => {
+          // Store handler references for cleanup (AC-1: Memory leak fix)
+          const formSubmitHandler = (event) => {
             try {
               const form = event.target;
               const formSelector = getFormSelector(form);
@@ -563,20 +564,46 @@ export class Tab {
             } catch (error) {
               console.error('[Blueberry] Form tracking error:', error);
             }
-          }, true); // Use capture phase
+          };
+
+          // Listen for form submissions
+          document.addEventListener('submit', formSubmitHandler, true); // Use capture phase
+
+          // Store cleanup function (AC-1: Memory leak fix)
+          window.__blueberryFormTrackerCleanup = () => {
+            document.removeEventListener('submit', formSubmitHandler, true);
+            delete window.__blueberryFormTrackerCleanup;
+            delete window.__blueberryFormTrackerInjected;
+          };
 
         })();
       `);
 
-      // Set up listener for postMessage from the injected script
+      // Set up listener for postMessage from the injected script (AC-1: Memory leak fix)
       await this.webContentsView.webContents.executeJavaScript(`
-        window.addEventListener('message', async (event) => {
-          if (event.data && event.data.type === 'blueberry-form-submit') {
-            // Forward to main process via console API workaround
-            // We'll intercept console messages in main process
-            console.log('__BLUEBERRY_FORM_SUBMIT__', JSON.stringify(event.data.data));
-          }
-        });
+        (function() {
+          // Prevent double injection
+          if (window.__blueberryFormMessageHandlerRegistered) return;
+          window.__blueberryFormMessageHandlerRegistered = true;
+
+          const messageHandler = async (event) => {
+            if (event.data && event.data.type === 'blueberry-form-submit') {
+              // Forward to main process via console API workaround
+              // We'll intercept console messages in main process
+              console.log('__BLUEBERRY_FORM_SUBMIT__', JSON.stringify(event.data.data));
+            }
+          };
+
+          window.addEventListener('message', messageHandler);
+
+          // Extend cleanup function to remove this listener too (AC-1: Memory leak fix)
+          const originalCleanup = window.__blueberryFormTrackerCleanup;
+          window.__blueberryFormTrackerCleanup = () => {
+            if (originalCleanup) originalCleanup();
+            window.removeEventListener('message', messageHandler);
+            delete window.__blueberryFormMessageHandlerRegistered;
+          };
+        })();
       `);
 
       log.info("[Tab] Form tracking script injected successfully");
@@ -611,8 +638,8 @@ export class Tab {
             return element.tagName.toLowerCase();
           }
 
-          // Listen for copy events
-          document.addEventListener('copy', (event) => {
+          // Store handler references for cleanup (AC-1: Memory leak fix)
+          const copyHandler = (event) => {
             try {
               const selection = window.getSelection();
               const text = selection ? selection.toString() : '';
@@ -634,10 +661,9 @@ export class Tab {
             } catch (error) {
               console.error('[Blueberry] Copy tracking error:', error);
             }
-          }, true); // Use capture phase
+          };
 
-          // Listen for paste events
-          document.addEventListener('paste', (event) => {
+          const pasteHandler = (event) => {
             try {
               const element = event.target;
               const pasteData = {
@@ -653,7 +679,19 @@ export class Tab {
             } catch (error) {
               console.error('[Blueberry] Paste tracking error:', error);
             }
-          }, true); // Use capture phase
+          };
+
+          // Listen for copy and paste events
+          document.addEventListener('copy', copyHandler, true); // Use capture phase
+          document.addEventListener('paste', pasteHandler, true); // Use capture phase
+
+          // Store cleanup function (AC-1: Memory leak fix)
+          window.__blueberryCopyPasteTrackerCleanup = () => {
+            document.removeEventListener('copy', copyHandler, true);
+            document.removeEventListener('paste', pasteHandler, true);
+            delete window.__blueberryCopyPasteTrackerCleanup;
+            delete window.__blueberryCopyPasteTrackerInjected;
+          };
 
         })();
       `);
@@ -882,8 +920,58 @@ export class Tab {
     this.webContentsView.webContents.stop();
   }
 
+  /**
+   * Cleanup event listeners before destroying tab (AC-1: Memory leak fix)
+   * Removes all injected event listeners to prevent memory leaks
+   */
+  private async cleanupEventListeners(): Promise<void> {
+    if (this._isDestroyed) return; // Already cleaned up
+
+    try {
+      // Call cleanup functions for all injected scripts
+      await this.webContentsView.webContents.executeJavaScript(`
+        (function() {
+          // Cleanup form tracking listeners
+          if (window.__blueberryFormTrackerCleanup) {
+            window.__blueberryFormTrackerCleanup();
+          }
+
+          // Cleanup copy/paste tracking listeners
+          if (window.__blueberryCopyPasteTrackerCleanup) {
+            window.__blueberryCopyPasteTrackerCleanup();
+          }
+
+          // Cleanup recording counter function
+          if (window.__blueberry_updateRecordingCounter) {
+            delete window.__blueberry_updateRecordingCounter;
+          }
+        })();
+      `);
+
+      log.info("[Tab] Event listeners cleaned up successfully");
+    } catch (error) {
+      // Ignore errors during cleanup (page might already be destroyed)
+      log.warn(
+        "[Tab] Event listener cleanup error (page likely destroyed):",
+        error,
+      );
+    }
+  }
+
   destroy(): void {
-    this.webContentsView.webContents.close();
+    if (this._isDestroyed) return;
+
+    this._isDestroyed = true;
+
+    // Cleanup event listeners before closing webContents (AC-1: Memory leak fix)
+    this.cleanupEventListeners()
+      .catch(() => {
+        // Silently ignore cleanup errors during destruction
+      })
+      .finally(() => {
+        // Close the webContents (this destroys the browser context)
+        this.webContentsView.webContents.close();
+      });
   }
 
   /**

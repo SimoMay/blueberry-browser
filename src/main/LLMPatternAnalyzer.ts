@@ -1,7 +1,4 @@
-import { generateText } from "ai";
-import { openai } from "@ai-sdk/openai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
+import { generateObject } from "ai";
 import log from "electron-log";
 import * as dotenv from "dotenv";
 import { join } from "path";
@@ -9,6 +6,7 @@ import {
   LLMAnalysisResultSchema,
   type LLMAnalysisResult,
 } from "./schemas/patternSchemas";
+import { LLMProviderConfig } from "./LLMProviderConfig";
 
 // Load environment variables
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -58,63 +56,34 @@ export interface SessionAction {
  * - Cost optimized: <$0.001 per pattern detection
  */
 export class LLMPatternAnalyzer {
-  private provider: "openai" | "anthropic" | "gemini";
-  private modelName: string;
+  private config: LLMProviderConfig;
   private requestTimeout = 30000; // 30 seconds max (Gemini API can be slow, cross-tab analysis needs more time)
 
   constructor() {
-    this.provider = this.getProvider();
-    this.modelName = this.getModelName();
-
-    log.info(
-      `[LLMPatternAnalyzer] Initialized with provider: ${this.provider}, model: ${this.modelName}`,
-    );
-  }
-
-  /**
-   * Get provider from environment (matches LLMClient.ts pattern)
-   */
-  private getProvider(): "openai" | "anthropic" | "gemini" {
-    const provider = process.env.LLM_PROVIDER?.toLowerCase();
-    if (provider === "anthropic") return "anthropic";
-    if (provider === "gemini") return "gemini";
-    return "openai"; // Default to OpenAI
-  }
-
-  /**
-   * Get model name from environment or use defaults
-   */
-  private getModelName(): string {
-    const defaults: Record<string, string> = {
-      openai: "gpt-4o-mini",
-      anthropic: "claude-3-5-haiku-20241022", // Haiku for speed
-      gemini: "gemini-1.5-flash",
-    };
-    return process.env.LLM_MODEL || defaults[this.provider];
+    // AC-4: Use centralized LLMProviderConfig instead of duplicated code
+    this.config = new LLMProviderConfig(false); // Use standard models, not vision models
   }
 
   /**
    * Analyze action sequence to determine if it's a pattern
    * Story 1.15 - AC 1, 2, 3
    * Story 1.19 - AC 2, 4: Exponential backoff retry, no fallback heuristics
+   * AC-3: Retry logic now handled by SDK (maxRetries: 3 in generateObject())
    *
    * @param actions - Array of 2-3 user actions (navigation, form, copy-paste)
-   * @param retryCount - Current retry attempt (0-3)
    * @returns LLM analysis result with pattern decision + metadata
    */
   async analyzeActionSequence(
     actions: Array<SessionAction>,
-    retryCount: number = 0,
   ): Promise<{ success: boolean; result?: LLMAnalysisResult; error?: string }> {
-    const MAX_RETRIES = 3;
-    const RETRY_DELAYS = [2000, 4000, 8000]; // Exponential backoff: 2s, 4s, 8s
-
     try {
       // Build rich context prompt with page titles, element text, tab switches
       const prompt = this.buildLLMPrompt(actions);
 
       // Call LLM with timeout enforcement (30 seconds)
-      const response = await Promise.race([
+      // AC-2: Use generateObject() for structured output (no manual JSON parsing needed)
+      // AC-3: SDK handles retries automatically with maxRetries: 3
+      const result = await Promise.race([
         this.callLLM(prompt),
         new Promise<never>((_, reject) =>
           setTimeout(
@@ -124,9 +93,6 @@ export class LLMPatternAnalyzer {
         ),
       ]);
 
-      // Parse and validate LLM response
-      const result = this.parseLLMResponse(response);
-
       log.info("[LLMPatternAnalyzer] Pattern analysis complete", {
         isPattern: result.isPattern,
         confidence: result.confidence,
@@ -135,31 +101,14 @@ export class LLMPatternAnalyzer {
 
       return { success: true, result };
     } catch (error) {
-      // Story 1.19 - AC 4: Log error with full context
-      log.error("[LLMPatternAnalyzer] LLM analysis failed", {
-        attempt: retryCount + 1,
-        maxRetries: MAX_RETRIES,
+      // AC-3: Error handling updated for SDK retry failures
+      log.error("[LLMPatternAnalyzer] LLM analysis failed after SDK retries", {
         actionCount: actions.length,
         actionTypes: actions.map((a) => a.type),
         error: error instanceof Error ? error.message : String(error),
       });
 
-      // Story 1.19 - AC 4: Retry with exponential backoff
-      if (retryCount < MAX_RETRIES) {
-        const delay = RETRY_DELAYS[retryCount];
-        log.info(
-          `[LLMPatternAnalyzer] Retrying in ${delay}ms (attempt ${retryCount + 2}/${MAX_RETRIES + 1})`,
-        );
-
-        await this.delay(delay);
-        return this.analyzeActionSequence(actions, retryCount + 1);
-      }
-
-      // Story 1.19 - AC 2, 4: All retries exhausted - return failure (NO fallback heuristics)
-      log.error("[LLMPatternAnalyzer] LLM analysis failed after retries", {
-        attempts: MAX_RETRIES + 1,
-      });
-
+      // Story 1.19 - AC 2, 4: All SDK retries exhausted - return failure (NO fallback heuristics)
       return {
         success: false,
         error:
@@ -168,12 +117,7 @@ export class LLMPatternAnalyzer {
     }
   }
 
-  /**
-   * Delay helper for exponential backoff retry
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
+  // AC-3: Removed manual retry logic - SDK now handles retries with exponential backoff
 
   /**
    * Build LLM prompt with full context
@@ -309,36 +253,25 @@ IMPORTANT FOR CROSS-TAB WORKFLOWS:
   }
 
   /**
-   * Call LLM with cost-optimized settings
+   * Call LLM with cost-optimized settings using generateObject() for structured output
    * Story 1.15 - AC 1: Fast models (GPT-4o-mini, Claude Haiku), <2 second response
+   * AC-2: Use generateObject() with Zod schema instead of manual JSON parsing
+   * AC-4: Use LLMProviderConfig for model initialization
    */
-  private async callLLM(prompt: string): Promise<string> {
-    const apiKey = this.getApiKey();
-    if (!apiKey) {
+  private async callLLM(prompt: string): Promise<LLMAnalysisResult> {
+    // AC-4: Use centralized config to initialize model
+    const model = this.config.initializeModel();
+    if (!model) {
       throw new Error(
-        `${this.provider.toUpperCase()}_API_KEY not found in environment`,
+        `${this.config.getProvider().toUpperCase()}_API_KEY not found in environment`,
       );
     }
 
-    // Set Gemini API key as environment variable (required by @ai-sdk/google)
-    if (this.provider === "gemini") {
-      process.env.GOOGLE_GENERATIVE_AI_API_KEY = apiKey;
-    }
-
-    // Initialize model
-    let model;
-    if (this.provider === "anthropic") {
-      model = anthropic(this.modelName);
-    } else if (this.provider === "gemini") {
-      model = google(this.modelName);
-    } else {
-      model = openai(this.modelName);
-    }
-
-    // Call LLM with JSON response format
-    const { text } = await generateText({
+    // AC-2: Use generateObject() with Zod schema for structured output
+    const { object } = await generateObject({
       model,
       prompt,
+      schema: LLMAnalysisResultSchema,
       /**
        * Temperature: 0.3 (Deterministic - Pattern Detection)
        * Rationale: Low temperature ensures consistent pattern detection decisions.
@@ -347,57 +280,18 @@ IMPORTANT FOR CROSS-TAB WORKFLOWS:
        * pattern detection (same actions detected as pattern one time, not another).
        */
       temperature: 0.3,
+      maxRetries: 3, // AC-3: SDK handles retries automatically
     });
 
-    log.info(
-      `[LLMPatternAnalyzer] LLM response: "${text.substring(0, 200)}..."`,
-    );
+    log.info("[LLMPatternAnalyzer] LLM response (structured)", {
+      isPattern: object.isPattern,
+      confidence: object.confidence,
+      intent: object.intentSummary?.substring(0, 100),
+    });
 
-    return text.trim();
+    return object;
   }
 
-  /**
-   * Get API key for configured provider
-   */
-  private getApiKey(): string | undefined {
-    if (this.provider === "anthropic") {
-      return process.env.ANTHROPIC_API_KEY;
-    } else if (this.provider === "gemini") {
-      return process.env.GEMINI_API_KEY;
-    } else {
-      return process.env.OPENAI_API_KEY;
-    }
-  }
-
-  /**
-   * Parse and validate LLM response
-   * Story 1.15 - AC 1, 2: Extract isPattern, confidence, intentSummary, workflow
-   */
-  private parseLLMResponse(response: string): LLMAnalysisResult {
-    try {
-      // Try to parse JSON directly
-      let jsonText = response.trim();
-
-      // Extract JSON if wrapped in markdown code blocks
-      const jsonMatch = jsonText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-      if (jsonMatch) {
-        jsonText = jsonMatch[1];
-      }
-
-      // Remove any leading/trailing text outside JSON object
-      const jsonStart = jsonText.indexOf("{");
-      const jsonEnd = jsonText.lastIndexOf("}");
-      if (jsonStart >= 0 && jsonEnd >= jsonStart) {
-        jsonText = jsonText.substring(jsonStart, jsonEnd + 1);
-      }
-
-      const json = JSON.parse(jsonText);
-      const validated = LLMAnalysisResultSchema.parse(json);
-
-      return validated;
-    } catch (error) {
-      log.error("[LLMPatternAnalyzer] Failed to parse LLM response:", error);
-      throw new Error("Invalid LLM response format");
-    }
-  }
+  // AC-2: Removed parseLLMResponse() method - generateObject() handles JSON parsing and validation automatically
+  // AC-4: Removed getProvider(), getModelName(), getApiKey() methods - now handled by LLMProviderConfig
 }
