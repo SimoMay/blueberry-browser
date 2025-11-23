@@ -76,6 +76,8 @@ It can also be a good way for us to give feedback if things are heading in the r
 
 ### Overview
 
+![Blueberry Browser Architecture Overview](blueberry-architecture-overview.png)
+
 Blueberry Browser now includes an intelligent automation system that learns from your browsing behavior and offers to automate repetitive workflows. Instead of relying on simple heuristics or rule-based pattern matching, the system uses Large Language Models (LLMs) to understand user intent and execute automations that adapt to changing page layouts.
 
 **Key Capabilities:**
