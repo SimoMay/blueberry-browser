@@ -4,6 +4,7 @@ import { Tab } from "./Tab";
 import { TopBar } from "./TopBar";
 import { SideBar } from "./SideBar";
 import { RecordingManager } from "./RecordingManager";
+import { PatternManager } from "./PatternManager";
 
 export class Window {
   private _baseWindow: BaseWindow;
@@ -175,10 +176,35 @@ export class Window {
       if (currentTab) {
         currentTab.hide();
 
+        // Capture tab switch in recording if active (Story 1.18 - AC 6)
+        this._recordingManager.captureTabSwitch(
+          this.activeTabId,
+          currentTab.title || "Unknown",
+          currentTab.url || "",
+          tabId,
+          tab.title || "Unknown",
+          tab.url || "",
+        );
+
         // Pause recording on old tab if active
         if (this._recordingManager.isRecording(this.activeTabId)) {
           this._recordingManager.pauseRecording(this.activeTabId);
         }
+
+        // Track tab switch for cross-tab pattern detection (Story 1.18 - AC 1)
+        PatternManager.getInstance()
+          .trackTabSwitch({
+            fromTabId: this.activeTabId,
+            fromTitle: currentTab.title || "Unknown",
+            fromUrl: currentTab.url || "",
+            toTabId: tabId,
+            toTitle: tab.title || "Unknown",
+            toUrl: tab.url || "",
+            timestamp: Date.now(),
+          })
+          .catch((error) => {
+            log.error("[Window] Failed to track tab switch:", error);
+          });
       }
     }
 

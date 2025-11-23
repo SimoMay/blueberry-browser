@@ -14,6 +14,8 @@ import { NotificationManager } from "./NotificationManager"; // Story 1.9
 
 /**
  * Pattern type
+ * Story 1.18 Course Correction: Tab switches are metadata only, not a separate pattern type
+ * Cross-tab workflows are saved as their primary type (copy-paste, navigation) with tab metadata
  */
 export type PatternType = "navigation" | "form" | "copy-paste";
 
@@ -154,6 +156,19 @@ interface CopyEventData {
 }
 
 /**
+ * Tab switch event data (Story 1.18)
+ */
+export interface TabSwitchData {
+  fromTabId: string;
+  fromTitle: string;
+  fromUrl: string;
+  toTabId: string;
+  toTitle: string;
+  toUrl: string;
+  timestamp: number;
+}
+
+/**
  * PatternManager - Singleton for managing patterns and automations
  * Handles CRUD operations for pattern detection and automation execution
  */
@@ -167,6 +182,7 @@ export class PatternManager {
   private copyEventCleanupInterval: NodeJS.Timeout | null = null; // Story 1.7b
   private sessionActions: SessionAction[] = []; // Story 1.15 - Session tracking for LLM context
   private lastLLMCallTimestamps: Map<string, number> = new Map(); // Story 1.15 - Rate limiting for LLM calls
+  private currentlyAnalyzing: Set<string> = new Set(); // Story 1.18 - Track pattern types currently being analyzed to prevent duplicates
   private currentExecutionEngine: { cancel: () => void } | null = null; // Story 1.16 - Track current execution for cancellation
   private currentExecutionId: string | null = null; // Story 1.16 - Track automation ID for immediate cancel feedback
 
@@ -1212,6 +1228,44 @@ export class PatternManager {
   }
 
   /**
+   * Track tab switch event (Story 1.18)
+   * Records tab transitions for cross-tab pattern detection
+   * Course Correction (2025-11-23): Tab switches are metadata only, not analyzed as standalone patterns
+   */
+  public async trackTabSwitch(data: TabSwitchData): Promise<void> {
+    try {
+      log.info("[PatternManager] Tab switch tracked:", {
+        from: `${data.fromTitle} (${data.fromTabId})`,
+        to: `${data.toTitle} (${data.toTabId})`,
+      });
+
+      // Store tab switch in session as metadata for cross-tab pattern detection
+      // Do NOT call trackSessionAndAnalyze - tab switches are metadata only, not standalone patterns
+      // Copy-paste and navigation patterns will include this metadata when analyzed
+      this.sessionActions.push({
+        type: "tab_switch",
+        fromTabId: data.fromTabId,
+        fromTitle: data.fromTitle,
+        fromUrl: data.fromUrl,
+        toTabId: data.toTabId,
+        toTitle: data.toTitle,
+        toUrl: data.toUrl,
+        timestamp: data.timestamp,
+        tabId: data.toTabId, // Current tab after switch
+      });
+
+      // Clean up old actions (keep last 10 minutes)
+      const TEN_MINUTES_MS = 10 * 60 * 1000;
+      const now = Date.now();
+      this.sessionActions = this.sessionActions.filter(
+        (a) => now - a.timestamp < TEN_MINUTES_MS,
+      );
+    } catch (error) {
+      log.error("[PatternManager] Track tab switch error:", error);
+    }
+  }
+
+  /**
    * Track form submission and store in pattern database
    * Groups form submissions by domain + field names hash
    * Triggers notification when occurrence_count reaches threshold (3)
@@ -1451,6 +1505,14 @@ export class PatternManager {
         return;
       }
 
+      // Story 1.18 Course Correction: Prevent parallel LLM analyses for same pattern type
+      if (this.currentlyAnalyzing.has(action.type)) {
+        log.info(
+          `[PatternManager] Already analyzing ${action.type} pattern, skipping duplicate analysis`,
+        );
+        return;
+      }
+
       // CODE REVIEW FIX #1: Pattern deduplication - check if pattern already exists
       log.info(
         `[PatternManager] Checking for existing ${action.type} patterns before LLM call...`,
@@ -1483,75 +1545,85 @@ export class PatternManager {
       // Update rate limit timestamp
       this.lastLLMCallTimestamps.set(action.type, Date.now());
 
-      // Analyze with LLM
-      const analysis =
-        await this.llmAnalyzer.analyzeActionSequence(sameTypeActions);
+      // Mark as currently analyzing to prevent duplicate parallel analyses
+      this.currentlyAnalyzing.add(action.type);
 
-      if (analysis.isPattern && analysis.confidence > 70) {
-        // LLM confirmed pattern with high confidence
-        log.info(
-          `[PatternManager] LLM detected pattern: ${analysis.intentSummary} (confidence: ${analysis.confidence}%)`,
-        );
+      try {
+        // Analyze with LLM
+        const analysis =
+          await this.llmAnalyzer.analyzeActionSequence(sameTypeActions);
 
-        // Save pattern to database
-        // CODE REVIEW FIX #2: Use UUID consistently instead of timestamp
-        const patternId = uuidv4();
-        const now = Date.now();
+        if (analysis.isPattern && analysis.confidence > 70) {
+          // LLM confirmed pattern with high confidence
+          log.info(
+            `[PatternManager] LLM detected pattern: ${analysis.intentSummary} (confidence: ${analysis.confidence}%)`,
+          );
 
-        const stmt = this.db.prepare(`
+          // Save pattern to database
+          // CODE REVIEW FIX #2: Use UUID consistently instead of timestamp
+          const patternId = uuidv4();
+          const now = Date.now();
+
+          const stmt = this.db.prepare(`
           INSERT INTO patterns (
             id, type, pattern_data, confidence, occurrence_count,
             first_seen, last_seen, created_at, intent_summary, summary_generated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
-        stmt.run(
-          patternId,
-          action.type,
-          JSON.stringify(analysis.workflow), // LLM-decided workflow format
-          analysis.confidence,
-          sameTypeActions.length, // Occurrence count
-          sameTypeActions[0].timestamp, // First action timestamp
-          now, // Last seen
-          now, // Created at
-          analysis.intentSummary, // Intent summary from LLM (Story 1.15 - AC 2)
-          now, // Summary generated at
-        );
+          stmt.run(
+            patternId,
+            action.type,
+            JSON.stringify(analysis.workflow), // LLM-decided workflow format
+            analysis.confidence,
+            sameTypeActions.length, // Occurrence count
+            sameTypeActions[0].timestamp, // First action timestamp
+            now, // Last seen
+            now, // Created at
+            analysis.intentSummary, // Intent summary from LLM (Story 1.15 - AC 2)
+            now, // Summary generated at
+          );
 
-        log.info(`[PatternManager] Pattern saved: ${patternId}`);
+          log.info(`[PatternManager] Pattern saved: ${patternId}`);
 
-        // Create notification
-        if (this.notificationManager) {
-          await this.notificationManager.createNotification({
-            type: "pattern",
-            severity: "info",
-            title: "Pattern detected",
-            message: `I noticed you're ${analysis.intentSummary}. Want me to help?`,
-            data: {
-              id: patternId,
-              type: action.type,
-              confidence: analysis.confidence,
-              occurrenceCount: sameTypeActions.length,
-              patternData: analysis.workflow,
-            },
-          });
+          // Create notification
+          if (this.notificationManager) {
+            await this.notificationManager.createNotification({
+              type: "pattern",
+              severity: "info",
+              title: "Pattern detected",
+              message: `I noticed you're ${analysis.intentSummary}. Want me to help?`,
+              data: {
+                id: patternId,
+                type: action.type,
+                confidence: analysis.confidence,
+                occurrenceCount: sameTypeActions.length,
+                patternData: analysis.workflow,
+              },
+            });
+          }
+
+          // Clear session actions after pattern detection
+          this.sessionActions = [];
+        } else if (!analysis.isPattern) {
+          // LLM rejected pattern (Story 1.15 - AC 3)
+          log.info(
+            `[PatternManager] LLM rejected pattern: ${analysis.rejectionReason || "Not a repetitive pattern"}`,
+          );
+
+          // Clear rejected actions to avoid accumulation (Story 1.15 - AC 3)
+          this.sessionActions = this.sessionActions.filter(
+            (a) => a.type !== action.type,
+          );
         }
-
-        // Clear session actions after pattern detection
-        this.sessionActions = [];
-      } else if (!analysis.isPattern) {
-        // LLM rejected pattern (Story 1.15 - AC 3)
-        log.info(
-          `[PatternManager] LLM rejected pattern: ${analysis.rejectionReason || "Not a repetitive pattern"}`,
-        );
-
-        // Clear rejected actions to avoid accumulation (Story 1.15 - AC 3)
-        this.sessionActions = this.sessionActions.filter(
-          (a) => a.type !== action.type,
-        );
+      } finally {
+        // Always clear the analyzing flag, even if error occurs
+        this.currentlyAnalyzing.delete(action.type);
       }
     } catch (error) {
       log.error("[PatternManager] LLM pattern analysis error:", error);
+      // Clear the analyzing flag on error
+      this.currentlyAnalyzing.delete(action.type);
       // Continue without pattern detection - non-critical
     }
   }

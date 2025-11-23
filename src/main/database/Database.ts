@@ -664,6 +664,145 @@ export class DatabaseManager {
           CREATE INDEX idx_automations_pattern ON automations(pattern_id);
         `,
       },
+      {
+        version: 9,
+        up: `
+          -- Story 1.18: Cross-Tab Pattern Tracking
+          -- Add 'tab_switch' to allowed pattern types
+          -- SQLite doesn't support ALTER TABLE MODIFY CONSTRAINT, so recreate the table
+          CREATE TABLE patterns_new (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('navigation', 'form', 'copy-paste', 'tab_switch')),
+            pattern_data TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            occurrence_count INTEGER DEFAULT 1,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            dismissed BOOLEAN DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            intent_summary TEXT,
+            summary_generated_at INTEGER,
+            intent_summary_detailed TEXT
+          );
+
+          -- Copy existing data
+          INSERT INTO patterns_new SELECT * FROM patterns;
+
+          -- Drop old table and rename new table
+          DROP TABLE patterns;
+          ALTER TABLE patterns_new RENAME TO patterns;
+
+          -- Recreate indexes
+          CREATE INDEX idx_patterns_type ON patterns(type);
+          CREATE INDEX idx_patterns_confidence ON patterns(confidence);
+          CREATE INDEX idx_patterns_dismissed ON patterns(dismissed);
+          CREATE INDEX idx_patterns_created_at ON patterns(created_at);
+        `,
+        down: `
+          -- Revert to v8 schema (remove 'tab_switch' from allowed types)
+          CREATE TABLE patterns_old (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('navigation', 'form', 'copy-paste')),
+            pattern_data TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            occurrence_count INTEGER DEFAULT 1,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            dismissed BOOLEAN DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            intent_summary TEXT,
+            summary_generated_at INTEGER,
+            intent_summary_detailed TEXT
+          );
+
+          -- Copy data, excluding tab_switch patterns
+          INSERT INTO patterns_old SELECT * FROM patterns WHERE type != 'tab_switch';
+
+          DROP TABLE patterns;
+          ALTER TABLE patterns_old RENAME TO patterns;
+
+          CREATE INDEX idx_patterns_type ON patterns(type);
+          CREATE INDEX idx_patterns_confidence ON patterns(confidence);
+          CREATE INDEX idx_patterns_dismissed ON patterns(dismissed);
+          CREATE INDEX idx_patterns_created_at ON patterns(created_at);
+        `,
+      },
+      {
+        version: 10,
+        up: `
+          -- Story 1.18 Course Correction: Remove 'tab_switch' from allowed pattern types
+          -- Decision: Tab switches are metadata only, not a separate pattern type
+          -- Cross-tab workflows saved as their primary type (copy-paste, navigation) with tab metadata
+          CREATE TABLE patterns_v10 (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('navigation', 'form', 'copy-paste')),
+            pattern_data TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            occurrence_count INTEGER DEFAULT 1,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            dismissed BOOLEAN DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            intent_summary TEXT,
+            summary_generated_at INTEGER,
+            intent_summary_detailed TEXT
+          );
+
+          -- Copy existing data, excluding tab_switch patterns (migrate to copy-paste type)
+          INSERT INTO patterns_v10
+          SELECT
+            id,
+            CASE WHEN type = 'tab_switch' THEN 'copy-paste' ELSE type END as type,
+            pattern_data,
+            confidence,
+            occurrence_count,
+            first_seen,
+            last_seen,
+            dismissed,
+            created_at,
+            intent_summary,
+            summary_generated_at,
+            intent_summary_detailed
+          FROM patterns;
+
+          -- Drop old table and rename new table
+          DROP TABLE patterns;
+          ALTER TABLE patterns_v10 RENAME TO patterns;
+
+          -- Recreate indexes
+          CREATE INDEX idx_patterns_type ON patterns(type);
+          CREATE INDEX idx_patterns_confidence ON patterns(confidence);
+          CREATE INDEX idx_patterns_dismissed ON patterns(dismissed);
+          CREATE INDEX idx_patterns_created_at ON patterns(created_at);
+        `,
+        down: `
+          -- Revert to v9 schema (restore tab_switch type)
+          CREATE TABLE patterns_v9 (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('navigation', 'form', 'copy-paste', 'tab_switch')),
+            pattern_data TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            occurrence_count INTEGER DEFAULT 1,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            dismissed BOOLEAN DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            intent_summary TEXT,
+            summary_generated_at INTEGER,
+            intent_summary_detailed TEXT
+          );
+
+          INSERT INTO patterns_v9 SELECT * FROM patterns;
+
+          DROP TABLE patterns;
+          ALTER TABLE patterns_v9 RENAME TO patterns;
+
+          CREATE INDEX idx_patterns_type ON patterns(type);
+          CREATE INDEX idx_patterns_confidence ON patterns(confidence);
+          CREATE INDEX idx_patterns_dismissed ON patterns(dismissed);
+          CREATE INDEX idx_patterns_created_at ON patterns(created_at);
+        `,
+      },
     ];
   }
 

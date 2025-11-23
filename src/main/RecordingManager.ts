@@ -16,9 +16,9 @@ export interface RecordingSession {
  * Base recorded action interface
  */
 export interface RecordedAction {
-  type: "navigation" | "form" | "click";
+  type: "navigation" | "form" | "click" | "tab_switch";
   timestamp: number;
-  data: NavigationAction | FormAction | ClickAction;
+  data: NavigationAction | FormAction | ClickAction | TabSwitchAction;
 }
 
 /**
@@ -45,6 +45,18 @@ export interface ClickAction {
   selector: string;
   textContent: string;
   url: string;
+}
+
+/**
+ * Tab switch action data (Story 1.18)
+ */
+export interface TabSwitchAction {
+  fromTabId: string;
+  fromTitle: string;
+  fromUrl: string;
+  toTabId: string;
+  toTitle: string;
+  toUrl: string;
 }
 
 /**
@@ -282,6 +294,47 @@ export class RecordingManager {
     } catch (error) {
       log.error("[RecordingManager] Failed to capture action:", error);
     }
+  }
+
+  /**
+   * Capture tab switch during recording (Story 1.18 - AC 6)
+   * Records tab transition as part of cross-tab workflow
+   */
+  captureTabSwitch(
+    fromTabId: string,
+    fromTitle: string,
+    fromUrl: string,
+    toTabId: string,
+    toTitle: string,
+    toUrl: string,
+  ): void {
+    // Check if either tab has an active recording session
+    const session =
+      this.recordingSessions.get(fromTabId) ||
+      this.recordingSessions.get(toTabId);
+
+    if (!session || session.status !== "active") {
+      return;
+    }
+
+    const action: RecordedAction = {
+      type: "tab_switch",
+      timestamp: Date.now(),
+      data: {
+        fromTabId,
+        fromTitle,
+        fromUrl,
+        toTabId,
+        toTitle,
+        toUrl,
+      },
+    };
+
+    session.actions.push(action);
+
+    log.info(
+      `[RecordingManager] Tab switch captured: ${fromTitle} → ${toTitle} (${session.actions.length} total actions)`,
+    );
   }
 
   /**

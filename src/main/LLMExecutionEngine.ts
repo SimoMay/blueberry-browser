@@ -585,13 +585,24 @@ SCREENSHOT: [see image above for current page appearance]
 
 CRITICAL INSTRUCTIONS:
 You must understand the INTENT of the workflow, not replay exact actions.
-- Workflow shows COPY/PASTE? → Understand it means "extract topic, then search for it"
 - Workflow has specific selectors like "#APjFqb"? → IGNORE them, find the search box yourself
 - Workflow has specific text? → Understand it's an EXAMPLE, use current page content
 - Page layout changed? → Adapt! Find equivalent elements on the current page
 - When typing into fields, USE THE EXTRACTED CONTENT from previous pages (see "EXTRACTED CONTENT" section above)
 - NEVER use placeholder text like "Product Hunt product" - always use the actual extracted content
 - If you need to navigate to a specific website (e.g., producthunt.com, linkedin.com) but can't find the link in the interactive elements list, use the "navigate" action with the full URL directly (e.g., "https://www.producthunt.com/") instead of marking the workflow as complete or giving up
+
+COPY/PASTE WORKFLOW PATTERN:
+When workflow shows COPY → PASTE pattern (collecting items from source to destination):
+1. EXTRACT from source = Use "extract" action to capture content from current page
+2. NAVIGATE to destination = Navigate to destination URL (notepad, form, document)
+3. PASTE to destination = Click into text area/input field, then type the extracted content
+   - CRITICAL: Type/append content WITHOUT overwriting existing text
+   - Use "type" action with the extracted content from "EXTRACTED CONTENT" section
+   - The destination may already have previous items - preserve them by appending new content
+4. RETURN to source = Navigate back to source page
+5. REPEAT = Continue to next item in the collection
+Example workflow cycle: Extract item → Navigate to destination → Type/append item → Return to source → Repeat
 
 SELECTOR RULES (CRITICAL - READ CAREFULLY):
 - Use ONLY standard CSS selectors compatible with document.querySelector()
@@ -605,14 +616,21 @@ SELECTOR RULES (CRITICAL - READ CAREFULLY):
   - button.accept ← Class selector
   - button[type="submit"] ← Attribute selector (type, name, href, aria-label are valid)
   - button[aria-label="Accept cookies"] ← Aria-label attribute
-  - a[href*="producthunt"] ← Contains match
+  - a[href*="producthunt"] ← Contains match (use *=, ^=, $= for pattern matching)
   - [data-blueberry-index="17"] ← Indexed selector (used for cookie buttons and elements without IDs)
-- To find elements by their displayed text:
+- WHEN TO USE EACH SELECTOR TYPE:
+  - For SPECIFIC elements (buttons, forms): Use selectors from "Interactive elements" list above
+  - For ITERATING through LISTS/collections (products, articles, posts):
+    → Use pattern selectors: a[href^="/products/"], a[href*="/item/"], article > a, etc.
+    → These are VALID standard CSS and essential for list iteration workflows
+  - Example: Collecting products from ProductHunt → Use a[href^="/products/"] to click each product link
+- To find specific elements by their displayed text:
   - Look at the "Interactive elements" list above
   - Find the element with matching text
   - Use the EXACT SELECTOR shown (e.g., "[data-blueberry-index='17']" not "button[text='...']")
 - Cookie consent buttons are PRIORITIZED at the top of the interactive elements list
-- NEVER invent CSS syntax - only use selectors from the interactive elements list!
+- NEVER invent INVALID CSS syntax (like :contains, :visible)
+- Standard CSS attribute selectors (href^=, class*=, etc.) are ALWAYS VALID and encouraged!
 
 TASK: Decide the next action based on workflow INTENT and current page state.
 

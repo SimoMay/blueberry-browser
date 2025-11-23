@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, ArrowRight } from "lucide-react";
 
 interface WorkflowDisplayProps {
   workflow: Record<string, unknown> | null | undefined;
@@ -33,9 +33,71 @@ export const WorkflowDisplay: React.FC<WorkflowDisplayProps> = ({
   const formatWorkflow = (data: Record<string, unknown>): React.JSX.Element => {
     // Check if it has steps array (LLM-decided format)
     if (Array.isArray(data.steps) && data.steps.length > 0) {
-      return (
-        <div className="space-y-2">
-          {data.steps.map((step: Record<string, unknown>, index: number) => (
+      // Build elements array with inferred tab switches (Story 1.18 - Option B)
+      const elements: React.JSX.Element[] = [];
+      let previousTabId: string | null = null;
+
+      data.steps.forEach((step: Record<string, unknown>, index: number) => {
+        const currentTabId = step.tabId ? String(step.tabId) : null;
+        const currentTabTitle = step.tabTitle ? String(step.tabTitle) : null;
+
+        // Detect tab switch: tabId changed from previous step
+        if (previousTabId && currentTabId && previousTabId !== currentTabId) {
+          elements.push(
+            <div
+              key={`tab-switch-${index}`}
+              className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800"
+            >
+              <div className="flex items-center gap-2">
+                <ArrowRight className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                <div className="flex-1 min-w-0 text-sm text-gray-900 dark:text-gray-100">
+                  <span className="font-medium">Switched to tab:</span>{" "}
+                  <span className="font-semibold">
+                    {currentTabTitle || "Unknown"}
+                  </span>
+                </div>
+              </div>
+            </div>,
+          );
+        }
+
+        // Handle explicit tab_switch actions
+        if (step.action === "tab_switch" || step.type === "tab_switch") {
+          const data = step.data as Record<string, unknown> | undefined;
+          const toUrl = String(data?.toUrl || step.toUrl || "");
+          const toTitle = String(data?.toTitle || step.toTitle || "Unknown");
+
+          elements.push(
+            <div
+              key={index}
+              className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800"
+            >
+              <div className="flex items-center gap-2">
+                <ArrowRight className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                <div className="flex-1 min-w-0 text-sm text-gray-900 dark:text-gray-100">
+                  <span className="font-medium">Switched to tab:</span>{" "}
+                  <span className="font-semibold">{toTitle}</span>
+                </div>
+              </div>
+              {toUrl && (
+                <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 ml-6 truncate">
+                  {toUrl}
+                </div>
+              )}
+            </div>,
+          );
+        } else {
+          // Regular action rendering
+          const tabTitle = currentTabTitle;
+
+          // For COPY-PASTE, detect cross-tab operation (Story 1.18 - Bug Fix #3)
+          const isCrossTabs =
+            step.action === "COPY-PASTE" &&
+            step.fromUrl &&
+            step.toUrl &&
+            String(step.fromUrl) !== String(step.toUrl);
+
+          elements.push(
             <div
               key={index}
               className="p-2 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700"
@@ -46,7 +108,19 @@ export const WorkflowDisplay: React.FC<WorkflowDisplayProps> = ({
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                    {String(step.action || "Unknown action")}
+                    <span>{String(step.action || "Unknown action")}</span>
+                    {/* Show cross-tab indicator for COPY-PASTE across tabs */}
+                    {isCrossTabs ? (
+                      <span className="text-xs text-blue-600 dark:text-blue-400 ml-2">
+                        (cross-tab)
+                      </span>
+                    ) : null}
+                    {/* Show tab context for regular actions (Story 1.18 - AC 6) */}
+                    {tabTitle && !isCrossTabs ? (
+                      <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
+                        (in {tabTitle})
+                      </span>
+                    ) : null}
                   </div>
                   {Boolean(step.target) && (
                     <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
@@ -63,12 +137,26 @@ export const WorkflowDisplay: React.FC<WorkflowDisplayProps> = ({
                       URL: {String(step.url)}
                     </div>
                   )}
+                  {/* Show source/destination for cross-tab COPY-PASTE */}
+                  {isCrossTabs ? (
+                    <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                      From: {new URL(String(step.fromUrl)).hostname} → To:{" "}
+                      {new URL(String(step.toUrl)).hostname}
+                    </div>
+                  ) : null}
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      );
+            </div>,
+          );
+        }
+
+        // Update previous tabId for next iteration
+        if (currentTabId) {
+          previousTabId = currentTabId;
+        }
+      });
+
+      return <div className="space-y-2">{elements}</div>;
     }
 
     // Fallback: Display as JSON-like structure

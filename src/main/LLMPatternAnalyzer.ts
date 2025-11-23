@@ -17,8 +17,8 @@ dotenv.config({ path: join(__dirname, "../../.env") });
  * Session action tracked by PatternManager
  */
 export interface SessionAction {
-  type: "navigation" | "form" | "copy-paste";
-  url: string;
+  type: "navigation" | "form" | "copy-paste" | "tab_switch";
+  url?: string;
   pageTitle?: string;
   timestamp: number;
   tabId: string;
@@ -35,6 +35,13 @@ export interface SessionAction {
   destinationElement?: string;
   copiedText?: string;
   elementText?: string;
+  // Tab switch specific fields (Story 1.18)
+  fromTabId?: string;
+  fromTitle?: string;
+  fromUrl?: string;
+  toTabId?: string;
+  toTitle?: string;
+  toUrl?: string;
 }
 
 /**
@@ -51,7 +58,7 @@ export interface SessionAction {
 export class LLMPatternAnalyzer {
   private provider: "openai" | "anthropic" | "gemini";
   private modelName: string;
-  private requestTimeout = 10000; // 10 seconds max (Gemini API can be slow)
+  private requestTimeout = 30000; // 30 seconds max (Gemini API can be slow, cross-tab analysis needs more time)
 
   constructor() {
     this.provider = this.getProvider();
@@ -139,12 +146,21 @@ export class LLMPatternAnalyzer {
     const actionDescriptions = actions
       .map((action, i) => {
         let desc = `${i + 1}. ${action.type.toUpperCase()}\n`;
-        desc += `   - Page title: "${action.pageTitle || "Unknown"}"\n`;
-        desc += `   - URL: ${action.url}\n`;
+
+        // Tab switch specific formatting (Story 1.18 - AC 4)
+        if (action.type === "tab_switch") {
+          desc += `   - Switched from: "${action.fromTitle}" (${action.fromUrl})\n`;
+          desc += `   - Switched to: "${action.toTitle}" (${action.toUrl})\n`;
+          desc += `   - From tab ID: ${action.fromTabId}\n`;
+          desc += `   - To tab ID: ${action.toTabId}\n`;
+        } else {
+          desc += `   - Page title: "${action.pageTitle || "Unknown"}"\n`;
+          desc += `   - URL: ${action.url}\n`;
+        }
 
         if (action.type === "navigation") {
           try {
-            desc += `   - Domain: ${new URL(action.url).hostname}\n`;
+            desc += `   - Domain: ${new URL(action.url || "").hostname}\n`;
           } catch {
             desc += `   - Domain: Invalid URL\n`;
           }
@@ -182,7 +198,9 @@ export class LLMPatternAnalyzer {
           desc += `   - Form fields: ${action.fields.length} (${fieldLabels.join(", ")})\n`;
         }
 
-        desc += `   - Tab: ${action.tabId}\n`;
+        if (action.type !== "tab_switch") {
+          desc += `   - Tab: ${action.tabId}\n`;
+        }
         desc += `   - Time: ${new Date(action.timestamp).toLocaleString()}\n`;
 
         return desc;
@@ -207,11 +225,26 @@ RESPOND IN JSON FORMAT:
   "intentSummary": string,
   "workflow": {
     "steps": [
-      {"tab": number, "action": string, "target": string}
+      {
+        "action": string,
+        "target": string,
+        "tabId": string,
+        "tabTitle": string,
+        "tabUrl": string
+      }
     ]
   },
   "rejectionReason": string | null
-}`;
+}
+
+IMPORTANT FOR CROSS-TAB WORKFLOWS:
+- Include tab metadata (tabId, tabTitle, tabUrl) for each action step
+- DO NOT create explicit "tab_switch" action steps - tab switches are inferred from tabId changes
+- Generalize patterns - describe WHAT to do, not specific data values
+  Example: "click next trending product" NOT "click Google Nano Banana Pro"
+  Example: "copy product details" NOT "copy 'Google Nano Banana Pro: Gemini 3 Pro...'"
+- Avoid literal URLs and page titles in action descriptions
+- Focus on the repeatable workflow pattern, not specific instance data`;
   }
 
   /**

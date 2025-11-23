@@ -2,6 +2,8 @@ import { z } from "zod";
 
 /**
  * Pattern type schema
+ * Story 1.18 Course Correction: Tab switches are metadata only, not a separate pattern type
+ * Cross-tab workflows are saved as their primary type (copy-paste, navigation) with tab metadata
  */
 export const PatternTypeSchema = z.enum(["navigation", "form", "copy-paste"]);
 
