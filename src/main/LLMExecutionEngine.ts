@@ -1043,7 +1043,7 @@ Return ONLY valid JSON, no markdown code blocks.`;
                   tag,
                   selector,
                   label: text,
-                  text: text.substring(0, TEXT_PREVIEW_LENGTH),
+                  text: text.substring(0, ${TEXT_PREVIEW_LENGTH}),
                   hasText: true,
                   isGeneric: false,
                   isCookieButton: true
@@ -1087,8 +1087,8 @@ Return ONLY valid JSON, no markdown code blocks.`;
               return {
                 tag,
                 selector,
-                label: label.substring(0, TEXT_PREVIEW_LENGTH),
-                text: text.substring(0, TEXT_PREVIEW_LENGTH),
+                label: label.substring(0, ${TEXT_PREVIEW_LENGTH}),
+                text: text.substring(0, ${TEXT_PREVIEW_LENGTH}),
                 hasText: text.length > 0,
                 isGeneric: selector === tag, // Flag generic selectors
                 isCookieButton: isCookieButton || false
