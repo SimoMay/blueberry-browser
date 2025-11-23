@@ -5,6 +5,7 @@ import React, {
   useEffect,
   ReactNode,
   useCallback,
+  useMemo,
 } from "react";
 
 /**
@@ -298,23 +299,40 @@ export function AutomationProvider({
     loadAutomations();
   }, [loadAutomations]);
 
+  // Memoize context value to prevent unnecessary re-renders (AC-7)
+  const value = useMemo(
+    () => ({
+      automations,
+      loading,
+      executing,
+      progress,
+      refining,
+      loadAutomations,
+      executeAutomation,
+      cancelAutomation,
+      editAutomation,
+      deleteAutomation,
+      startRefinement,
+      cancelRefinement,
+    }),
+    [
+      automations,
+      loading,
+      executing,
+      progress,
+      refining,
+      loadAutomations,
+      executeAutomation,
+      cancelAutomation,
+      editAutomation,
+      deleteAutomation,
+      startRefinement,
+      cancelRefinement,
+    ],
+  );
+
   return (
-    <AutomationContext.Provider
-      value={{
-        automations,
-        loading,
-        executing,
-        progress,
-        refining,
-        loadAutomations,
-        executeAutomation,
-        cancelAutomation,
-        editAutomation,
-        deleteAutomation,
-        startRefinement,
-        cancelRefinement,
-      }}
-    >
+    <AutomationContext.Provider value={value}>
       {children}
     </AutomationContext.Provider>
   );

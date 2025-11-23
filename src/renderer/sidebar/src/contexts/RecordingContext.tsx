@@ -6,6 +6,7 @@ import {
   ReactNode,
   useCallback,
   type JSX,
+  useMemo,
 } from "react";
 
 interface RecordingState {
@@ -174,16 +175,20 @@ export function RecordingProvider({
     };
   }, []);
 
+  // Memoize context value to prevent unnecessary re-renders (AC-7)
+  const value = useMemo(
+    () => ({
+      recording,
+      startRecording,
+      stopRecording,
+      saveRecording,
+      discardRecording,
+    }),
+    [recording, startRecording, stopRecording, saveRecording, discardRecording],
+  );
+
   return (
-    <RecordingContext.Provider
-      value={{
-        recording,
-        startRecording,
-        stopRecording,
-        saveRecording,
-        discardRecording,
-      }}
-    >
+    <RecordingContext.Provider value={value}>
       {children}
     </RecordingContext.Provider>
   );

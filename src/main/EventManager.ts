@@ -26,6 +26,23 @@ import {
   StartContinuationSchema,
   CancelExecutionSchema,
 } from "./schemas/patternSchemas";
+import {
+  createTabId,
+  createPatternId,
+  createAutomationId,
+  createNotificationId,
+} from "./types/brandedTypes";
+import type {
+  SaveAutomationInput,
+  ExecuteAutomationInput,
+  EditAutomationInput,
+  DeleteAutomationInput,
+  CopyEventInput,
+  PasteEventInput,
+  StartContinuationInput,
+} from "./schemas/patternSchemas";
+import type { DismissNotificationInput } from "./schemas/notificationSchemas";
+import type { StartRecordingInput } from "./schemas/recordingSchemas";
 import { MonitorManager } from "./MonitorManager";
 import {
   MonitorCreateSchema,
@@ -279,8 +296,11 @@ export class EventManager {
     ipcMain.handle("notification:dismiss", async (_, input) => {
       try {
         const validInput = DismissNotificationSchema.parse(input);
+        const typedInput: DismissNotificationInput = {
+          notificationId: createNotificationId(validInput.notificationId),
+        };
         await notificationManager.dismissNotification(
-          validInput.notificationId,
+          typedInput.notificationId,
         );
         return { success: true };
       } catch (error) {
@@ -453,8 +473,14 @@ export class EventManager {
         // Zod validation
         const validated = SaveAutomationSchema.parse(data);
 
+        // Convert to branded types after validation
+        const input: SaveAutomationInput = {
+          ...validated,
+          pattern_id: createPatternId(validated.pattern_id),
+        };
+
         // Call PatternManager
-        return await patternManager.saveAutomation(validated);
+        return await patternManager.saveAutomation(input);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
@@ -526,6 +552,11 @@ export class EventManager {
           automation_id: automationId,
         });
 
+        // Convert to branded types
+        const input: ExecuteAutomationInput = {
+          automation_id: createAutomationId(validated.automation_id),
+        };
+
         // TODO: Replace with toast notifications instead of persistent notifications
         // System notifications don't fit the notification panel interaction model
         // (they're not clickable like pattern notifications)
@@ -557,7 +588,7 @@ export class EventManager {
           screenshotBase64?: string,
         ): void => {
           this.mainWindow.sidebar.view.webContents.send("automation:progress", {
-            automationId: validated.automation_id,
+            automationId: input.automation_id, // Send branded ID (will be serialized as string over IPC)
             currentStep: step,
             totalSteps: total,
             stepDescription: description,
@@ -567,7 +598,7 @@ export class EventManager {
 
         // Call PatternManager with Window instance and progress callback
         const result = await patternManager.executeAutomation(
-          validated.automation_id,
+          input.automation_id,
           this.mainWindow,
           onProgress,
         );
@@ -671,8 +702,14 @@ export class EventManager {
         // Zod validation
         const validated = EditAutomationSchema.parse(data);
 
+        // Convert to branded types
+        const input: EditAutomationInput = {
+          ...validated,
+          automationId: createAutomationId(validated.automationId),
+        };
+
         // Call PatternManager
-        return await patternManager.editAutomation(validated);
+        return await patternManager.editAutomation(input);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
@@ -710,8 +747,13 @@ export class EventManager {
         // Zod validation
         const validated = DeleteAutomationSchema.parse({ automationId });
 
+        // Convert to branded types
+        const input: DeleteAutomationInput = {
+          automationId: createAutomationId(validated.automationId),
+        };
+
         // Call PatternManager
-        return await patternManager.deleteAutomation(validated.automationId);
+        return await patternManager.deleteAutomation(input.automationId);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
@@ -774,15 +816,27 @@ export class EventManager {
         }
 
         // Zod validation
-        let validated: {
-          copyEvent?: z.infer<typeof CopyEventSchema>;
-          pasteEvent?: z.infer<typeof PasteEventSchema>;
+        let typedInput: {
+          copyEvent?: CopyEventInput;
+          pasteEvent?: PasteEventInput;
         };
 
         if (data.copyEvent) {
-          validated = { copyEvent: CopyEventSchema.parse(data.copyEvent) };
+          const validated = CopyEventSchema.parse(data.copyEvent);
+          typedInput = {
+            copyEvent: {
+              ...validated,
+              tabId: createTabId(validated.tabId),
+            },
+          };
         } else if (data.pasteEvent) {
-          validated = { pasteEvent: PasteEventSchema.parse(data.pasteEvent) };
+          const validated = PasteEventSchema.parse(data.pasteEvent);
+          typedInput = {
+            pasteEvent: {
+              ...validated,
+              tabId: createTabId(validated.tabId),
+            },
+          };
         } else {
           return {
             success: false,
@@ -794,7 +848,7 @@ export class EventManager {
         }
 
         // Call PatternManager
-        return await patternManager.trackCopyPaste(validated);
+        return await patternManager.trackCopyPaste(typedInput);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
@@ -832,6 +886,12 @@ export class EventManager {
         // Zod validation
         const validated = StartContinuationSchema.parse(data);
 
+        // Convert to branded types
+        const input: StartContinuationInput = {
+          ...validated,
+          patternId: createPatternId(validated.patternId),
+        };
+
         // Get pattern data from PatternManager
         const patternResult = await patternManager.getAllPatterns();
         if (!patternResult.success || !patternResult.data) {
@@ -845,7 +905,7 @@ export class EventManager {
         }
 
         const pattern = patternResult.data.find(
-          (p) => p.id === validated.patternId,
+          (p) => p.id === input.patternId,
         );
         if (!pattern) {
           return {
@@ -971,8 +1031,13 @@ export class EventManager {
         // Zod validation
         const validated = StartRecordingSchema.parse(data);
 
+        // Convert to branded types
+        const input: StartRecordingInput = {
+          tabId: createTabId(validated.tabId),
+        };
+
         // Start recording
-        return recordingManager.startRecording(validated.tabId);
+        return recordingManager.startRecording(input.tabId);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {

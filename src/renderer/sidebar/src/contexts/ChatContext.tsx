@@ -4,6 +4,7 @@ import React, {
   useEffect,
   useState,
   useCallback,
+  useMemo,
 } from "react";
 
 interface Message {
@@ -182,15 +183,27 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, []);
 
-  const value: ChatContextType = {
-    messages,
-    isLoading,
-    sendMessage,
-    clearChat,
-    getPageContent,
-    getPageText,
-    getCurrentUrl,
-  };
+  // Memoize context value to prevent unnecessary re-renders (AC-7)
+  const value: ChatContextType = useMemo(
+    () => ({
+      messages,
+      isLoading,
+      sendMessage,
+      clearChat,
+      getPageContent,
+      getPageText,
+      getCurrentUrl,
+    }),
+    [
+      messages,
+      isLoading,
+      sendMessage,
+      clearChat,
+      getPageContent,
+      getPageText,
+      getCurrentUrl,
+    ],
+  );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 };

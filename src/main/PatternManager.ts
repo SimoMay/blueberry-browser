@@ -11,6 +11,12 @@ import { SaveRecordingInput } from "./schemas/recordingSchemas";
 import { IntentSummarizer } from "./IntentSummarizer"; // Story 1.12
 import { LLMPatternAnalyzer, type SessionAction } from "./LLMPatternAnalyzer"; // Story 1.15
 import { NotificationManager } from "./NotificationManager"; // Story 1.9
+import {
+  createPatternId,
+  createAutomationId,
+  type PatternId,
+  type AutomationId,
+} from "./types/brandedTypes";
 
 /**
  * Pattern type
@@ -23,7 +29,7 @@ export type PatternType = "navigation" | "form" | "copy-paste";
  * Pattern interface
  */
 export interface Pattern {
-  id: string;
+  id: PatternId;
   type: PatternType;
   pattern_data: string;
   confidence: number;
@@ -34,8 +40,8 @@ export interface Pattern {
  * Automation interface
  */
 export interface Automation {
-  id: string;
-  pattern_id: string;
+  id: AutomationId;
+  pattern_id: PatternId;
   name: string;
   description?: string;
   created_at: number;
@@ -255,7 +261,7 @@ export class PatternManager {
 
       // Placeholder: Database integration will happen in Story 1.6
       const pattern: Pattern = {
-        id: uuidv4(),
+        id: createPatternId(uuidv4()),
         type: data.type,
         pattern_data: data.pattern_data,
         confidence: data.confidence,
@@ -323,7 +329,7 @@ export class PatternManager {
       }>;
 
       const patterns: Pattern[] = rows.map((row) => ({
-        id: row.id,
+        id: createPatternId(row.id),
         type: row.type as PatternType,
         pattern_data: row.pattern_data,
         confidence: row.confidence,
@@ -376,7 +382,7 @@ export class PatternManager {
 
       // Create automation object
       const automation: Automation = {
-        id: uuidv4(),
+        id: createAutomationId(uuidv4()),
         pattern_id: data.pattern_id,
         name: data.name,
         description: data.description,
@@ -520,8 +526,8 @@ export class PatternManager {
 
       // Parse pattern_data JSON for each automation
       const automations = rows.map((row) => ({
-        id: row.id,
-        patternId: row.patternId,
+        id: createAutomationId(row.id),
+        patternId: createPatternId(row.patternId),
         name: row.name,
         description: row.description,
         patternData: JSON.parse(row.patternData),

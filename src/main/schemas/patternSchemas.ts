@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PatternId, AutomationId, TabId } from "../types/brandedTypes";
 
 /**
  * Pattern type schema
@@ -46,6 +47,7 @@ export const PatternGetAllSchema = z
 
 /**
  * Save automation input schema
+ * Note: pattern_id validates as string at runtime (Zod), but TypeScript type uses branded PatternId
  */
 export const SaveAutomationSchema = z.object({
   pattern_id: z.string().min(1, { message: "Pattern ID is required" }),
@@ -151,20 +153,67 @@ export const LLMExecutionStepSchema = z.object({
 });
 
 /**
- * Type exports for TypeScript
+ * Type exports for TypeScript (with branded types for type safety)
  */
 export type PatternTrackInput = z.infer<typeof PatternTrackSchema>;
 export type PatternGetAllInput = z.infer<typeof PatternGetAllSchema>;
-export type SaveAutomationInput = z.infer<typeof SaveAutomationSchema>;
-export type ExecuteAutomationInput = z.infer<typeof ExecuteAutomationSchema>;
-export type EditAutomationInput = z.infer<typeof EditAutomationSchema>;
-export type DeleteAutomationInput = z.infer<typeof DeleteAutomationSchema>;
-export type CopyEventInput = z.infer<typeof CopyEventSchema>;
-export type PasteEventInput = z.infer<typeof PasteEventSchema>;
-export type SuggestContinuationInput = z.infer<
-  typeof SuggestContinuationSchema
->;
-export type StartContinuationInput = z.infer<typeof StartContinuationSchema>;
+
+// Override Zod inference to use branded types for IDs
+export type SaveAutomationInput = Omit<
+  z.infer<typeof SaveAutomationSchema>,
+  "pattern_id"
+> & {
+  pattern_id: PatternId;
+};
+
+export type ExecuteAutomationInput = Omit<
+  z.infer<typeof ExecuteAutomationSchema>,
+  "automation_id"
+> & {
+  automation_id: AutomationId;
+};
+
+export type EditAutomationInput = Omit<
+  z.infer<typeof EditAutomationSchema>,
+  "automationId"
+> & {
+  automationId: AutomationId;
+};
+
+export type DeleteAutomationInput = Omit<
+  z.infer<typeof DeleteAutomationSchema>,
+  "automationId"
+> & {
+  automationId: AutomationId;
+};
+
+export type CopyEventInput = Omit<z.infer<typeof CopyEventSchema>, "tabId"> & {
+  tabId: TabId;
+};
+
+export type PasteEventInput = Omit<
+  z.infer<typeof PasteEventSchema>,
+  "tabId"
+> & {
+  tabId: TabId;
+};
+
+export type SuggestContinuationInput = Omit<
+  z.infer<typeof SuggestContinuationSchema>,
+  "patternId"
+> & {
+  patternId: PatternId;
+};
+
+export type StartContinuationInput = Omit<
+  z.infer<typeof StartContinuationSchema>,
+  "patternId"
+> & {
+  patternId: PatternId;
+};
+
+// CancelExecutionInput keeps executionId as string (not a domain ID type)
 export type CancelExecutionInput = z.infer<typeof CancelExecutionSchema>;
+
 export type LLMAnalysisResult = z.infer<typeof LLMAnalysisResultSchema>;
 export type LLMExecutionStep = z.infer<typeof LLMExecutionStepSchema>;

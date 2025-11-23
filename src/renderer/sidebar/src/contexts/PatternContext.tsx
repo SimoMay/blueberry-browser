@@ -4,6 +4,7 @@ import React, {
   useEffect,
   ReactNode,
   useCallback,
+  useMemo,
 } from "react";
 import { Notification } from "./notificationTypes";
 
@@ -268,13 +269,17 @@ export const PatternProvider: React.FC<PatternProviderProps> = ({
     setPatterns([]);
   }, []);
 
-  const value: PatternContextValue = {
-    patterns,
-    unacknowledgedCount: patterns.length,
-    dismissPattern,
-    saveAutomation,
-    clearAcknowledged,
-  };
+  // Memoize context value to prevent unnecessary re-renders (AC-7)
+  const value: PatternContextValue = useMemo(
+    () => ({
+      patterns,
+      unacknowledgedCount: patterns.length,
+      dismissPattern,
+      saveAutomation,
+      clearAcknowledged,
+    }),
+    [patterns, dismissPattern, saveAutomation, clearAcknowledged],
+  );
 
   return (
     <PatternContext.Provider value={value}>{children}</PatternContext.Provider>

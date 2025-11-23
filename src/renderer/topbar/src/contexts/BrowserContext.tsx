@@ -4,6 +4,7 @@ import React, {
   useEffect,
   useState,
   useCallback,
+  useMemo,
 } from "react";
 
 interface TabInfo {
@@ -189,21 +190,39 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => clearInterval(interval);
   }, [refreshTabs]);
 
-  const value: BrowserContextType = {
-    tabs,
-    activeTab,
-    isLoading,
-    createTab,
-    closeTab,
-    switchTab,
-    refreshTabs,
-    navigateToUrl,
-    goBack,
-    goForward,
-    reload,
-    takeScreenshot,
-    runJavaScript,
-  };
+  // Memoize context value to prevent unnecessary re-renders (AC-7)
+  const value: BrowserContextType = useMemo(
+    () => ({
+      tabs,
+      activeTab,
+      isLoading,
+      createTab,
+      closeTab,
+      switchTab,
+      refreshTabs,
+      navigateToUrl,
+      goBack,
+      goForward,
+      reload,
+      takeScreenshot,
+      runJavaScript,
+    }),
+    [
+      tabs,
+      activeTab,
+      isLoading,
+      createTab,
+      closeTab,
+      switchTab,
+      refreshTabs,
+      navigateToUrl,
+      goBack,
+      goForward,
+      reload,
+      takeScreenshot,
+      runJavaScript,
+    ],
+  );
 
   return (
     <BrowserContext.Provider value={value}>{children}</BrowserContext.Provider>

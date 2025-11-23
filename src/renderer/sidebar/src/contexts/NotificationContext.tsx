@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, ReactNode } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  ReactNode,
+  useMemo,
+} from "react";
 import {
   Notification,
   NotificationContext,
@@ -124,14 +130,25 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
     };
   }, [refreshNotifications]);
 
-  const value: NotificationContextType = {
-    notifications,
-    unreadCount,
-    dismissNotification,
-    markAllRead,
-    refreshNotifications,
-    loading,
-  };
+  // Memoize context value to prevent unnecessary re-renders (AC-7)
+  const value: NotificationContextType = useMemo(
+    () => ({
+      notifications,
+      unreadCount,
+      dismissNotification,
+      markAllRead,
+      refreshNotifications,
+      loading,
+    }),
+    [
+      notifications,
+      unreadCount,
+      dismissNotification,
+      markAllRead,
+      refreshNotifications,
+      loading,
+    ],
+  );
 
   return (
     <NotificationContext.Provider value={value}>
