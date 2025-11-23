@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { Sparkles, Check, X } from "lucide-react";
+import { Sparkles, Check, X, Eye, EyeOff } from "lucide-react";
 import { Button } from "@common/components/Button";
 import { useNotifications } from "../hooks/useNotifications";
+import { WorkflowDisplay } from "./WorkflowDisplay";
 
 // Note: electron-log not available in renderer, using console.error for logging
 
@@ -40,6 +41,7 @@ interface AIPatternMessageProps {
       sequence?: Array<{ url: string }>;
       domain?: string;
       fields?: Array<unknown>;
+      steps?: Array<Record<string, unknown>>; // Story 1.19: LLM-generated workflow steps
     };
   };
   notificationId: string; // For dismissing notification after action
@@ -59,6 +61,7 @@ export const AIPatternMessage: React.FC<AIPatternMessageProps> = ({
 }) => {
   const { dismissNotification } = useNotifications();
   const [showForm, setShowForm] = useState(false);
+  const [showWorkflow, setShowWorkflow] = useState(false); // Story 1.19: Toggle workflow preview
   const [automationName, setAutomationName] = useState(
     patternData.intentSummary || "",
   );
@@ -167,9 +170,47 @@ export const AIPatternMessage: React.FC<AIPatternMessageProps> = ({
           </div>
         </div>
 
+        {/* Story 1.19: Workflow Preview Section - Hide when form is open */}
+        {!showForm && patternData.patternData?.steps && (
+          <div className="mt-3 pl-8 space-y-2">
+            <Button
+              onClick={() => setShowWorkflow(!showWorkflow)}
+              variant="ghost"
+              size="sm"
+              className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+            >
+              {showWorkflow ? (
+                <>
+                  <EyeOff className="w-4 h-4 mr-1" />
+                  Hide Workflow
+                </>
+              ) : (
+                <>
+                  <Eye className="w-4 h-4 mr-1" />
+                  Preview Workflow ({patternData.patternData.steps.length}{" "}
+                  steps)
+                </>
+              )}
+            </Button>
+            {showWorkflow && (
+              <div className="p-3 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                <WorkflowDisplay
+                  workflow={patternData.patternData}
+                  title="Workflow Steps"
+                  collapsible={false}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Action buttons or save form (AC 3, 4) */}
         {showForm ? (
           <div className="mt-4 space-y-3 pl-8">
+            {/* Form header to make editing obvious */}
+            <div className="text-sm font-medium text-foreground">
+              Customize automation details:
+            </div>
             {/* Pre-filled with SHORT summary (AC 4) */}
             <input
               type="text"
@@ -198,6 +239,7 @@ export const AIPatternMessage: React.FC<AIPatternMessageProps> = ({
                        focus:outline-none focus:ring-2 focus:ring-blue-500
                        disabled:opacity-50 resize-none"
             />
+
             <div className="flex gap-2">
               <Button
                 onClick={handleSaveAutomation}

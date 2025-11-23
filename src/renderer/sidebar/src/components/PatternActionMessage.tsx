@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Eye, EyeOff } from "lucide-react";
 import { Button } from "@common/components/Button";
 import { useNotifications } from "../hooks/useNotifications";
+import { WorkflowDisplay } from "./WorkflowDisplay";
 
 interface PatternActionMessageProps {
   content: string;
@@ -11,10 +12,13 @@ interface PatternActionMessageProps {
     patternType: "navigation" | "form" | "copy-paste";
     confidence: number;
     occurrenceCount: number;
+    intentSummary?: string; // Story 1.19: LLM-generated summary
+    intentSummaryDetailed?: string; // Story 1.19: LLM-generated detailed summary
     patternData?: {
       sequence?: Array<{ url: string }>;
       domain?: string;
       fields?: Array<unknown>;
+      steps?: Array<Record<string, unknown>>; // Story 1.19: LLM-generated workflow steps
     };
   };
   notificationId: string;
@@ -34,8 +38,13 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
 }) => {
   const { dismissNotification } = useNotifications();
   const [showForm, setShowForm] = useState(false);
-  const [automationName, setAutomationName] = useState("");
-  const [automationDescription, setAutomationDescription] = useState("");
+  const [showWorkflow, setShowWorkflow] = useState(false); // Story 1.19: Workflow preview toggle
+  const [automationName, setAutomationName] = useState(
+    patternData.intentSummary || "",
+  );
+  const [automationDescription, setAutomationDescription] = useState(
+    patternData.intentSummaryDetailed || "",
+  );
   const [isProcessing, setIsProcessing] = useState(false);
 
   const handleConvert = (): void => {
@@ -113,6 +122,11 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
     }
   };
 
+  // Story 1.19: Generate message from LLM summary if available
+  const displayMessage = patternData.intentSummary
+    ? `Hey! I noticed you've been ${patternData.intentSummary.toLowerCase()}. Want to save this as an automation?`
+    : content;
+
   return (
     <div className="relative w-full animate-fade-in">
       {/* Pattern Action Message Container - Distinctive styling */}
@@ -123,16 +137,54 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
             <Sparkles className="w-5 h-5 text-primary" />
           </div>
           <div className="flex-1">
-            {/* AI message content */}
+            {/* AI message content - Story 1.19: Use LLM summary if available */}
             <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">
-              {content}
+              {displayMessage}
             </p>
           </div>
         </div>
 
+        {/* Story 1.19: Workflow Preview Section - Hide when form is open */}
+        {!showForm && patternData.patternData?.steps && (
+          <div className="mt-3 pl-8 space-y-2">
+            <Button
+              onClick={() => setShowWorkflow(!showWorkflow)}
+              variant="ghost"
+              size="sm"
+              className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+            >
+              {showWorkflow ? (
+                <>
+                  <EyeOff className="w-4 h-4 mr-1" />
+                  Hide Workflow
+                </>
+              ) : (
+                <>
+                  <Eye className="w-4 h-4 mr-1" />
+                  Preview Workflow ({patternData.patternData.steps.length}{" "}
+                  steps)
+                </>
+              )}
+            </Button>
+            {showWorkflow && (
+              <div className="p-3 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                <WorkflowDisplay
+                  workflow={patternData.patternData}
+                  title="Workflow Steps"
+                  collapsible={false}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Action buttons or form */}
         {showForm ? (
           <div className="mt-4 space-y-3 pl-8">
+            {/* Form header to make editing obvious */}
+            <div className="text-sm font-medium text-foreground">
+              Customize automation details:
+            </div>
             <input
               type="text"
               placeholder="Automation name *"
@@ -159,6 +211,7 @@ export const PatternActionMessage: React.FC<PatternActionMessageProps> = ({
                        focus:outline-none focus:ring-2 focus:ring-primary/50
                        disabled:opacity-50 resize-none"
             />
+
             <div className="flex gap-2">
               <Button
                 onClick={handleSaveAutomation}

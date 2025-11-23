@@ -9,19 +9,23 @@ import { Notification } from "./notificationTypes";
 
 /**
  * Pattern detected by PatternRecognizer
+ * Updated Story 1.19: Added LLM summary fields and workflow steps
  */
 export interface Pattern {
   id: string;
-  type: "navigation" | "form";
+  type: "navigation" | "form" | "copy-paste";
   patternData: {
     sequence?: Array<{ url: string; title?: string }>;
     domain?: string;
     fields?: Array<{ name: string; type?: string }>;
+    steps?: Array<Record<string, unknown>>; // Story 1.19: LLM-generated workflow steps
   };
   confidence: number;
   occurrenceCount: number;
   firstSeen?: number;
   lastSeen?: number;
+  intentSummary?: string; // Story 1.19: LLM-generated short summary
+  intentSummaryDetailed?: string; // Story 1.19: LLM-generated detailed summary
 }
 
 /**
@@ -58,12 +62,14 @@ export const PatternProvider: React.FC<PatternProviderProps> = ({
    */
   function isPatternData(data: unknown): data is {
     id: string;
-    type: "navigation" | "form";
+    type: "navigation" | "form" | "copy-paste";
     confidence: number;
     occurrenceCount: number;
     firstSeen?: number;
     lastSeen?: number;
     patternData: unknown;
+    intentSummary?: string; // Story 1.19
+    intentSummaryDetailed?: string; // Story 1.19
   } {
     return (
       typeof data === "object" &&

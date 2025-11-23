@@ -21,12 +21,14 @@ interface PatternData {
 /**
  * IntentSummarizer - Singleton service for generating AI-powered intent summaries
  * Implements Story 1.12: AI Pattern Intent Summarization
+ * Updated Story 1.19: Remove Template Fallbacks (LLM-only, no templates)
  *
  * Features:
  * - Single LLM API call per pattern (when confidence >70%)
  * - Enhanced text context (page titles, element text, form labels)
  * - 1-hour caching to minimize API costs
- * - Fallback to template-based descriptions on LLM failure
+ * - Exponential backoff retry on LLM failure (3 attempts: 2s, 4s, 8s delays)
+ * - NO fallback templates - pattern analysis fails if LLM unavailable
  * - Cost optimization: GPT-4o-mini or Claude Haiku (<$0.01 per pattern)
  */
 // Default models per provider (matching LLMClient.ts pattern)
@@ -80,19 +82,33 @@ export class IntentSummarizer {
   }
 
   /**
-   * Summarize pattern intent using LLM with caching
+   * Summarize pattern intent using LLM with caching and retry logic
    * Story 1.12 - AC 1: Single LLM call per pattern, cached for 1 hour
+   * Story 1.19 - AC 1, 4: Exponential backoff retry, no template fallbacks
    * Generates both short (notification) and detailed (chat) summaries
    */
   public async summarizePattern(
     patternId: string,
-  ): Promise<{ short: string; detailed: string }> {
+    retryCount: number = 0,
+  ): Promise<{
+    success: boolean;
+    short?: string;
+    detailed?: string;
+    error?: string;
+  }> {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAYS = [2000, 4000, 8000]; // Exponential backoff: 2s, 4s, 8s
+
     try {
       // Check cache first (Story 1.12 - AC 3)
       const cached = this.getCachedSummary(patternId);
       if (cached) {
         log.info(`[IntentSummarizer] Cache HIT for pattern ${patternId}`);
-        return cached;
+        return {
+          success: true,
+          short: cached.short,
+          detailed: cached.detailed,
+        };
       }
 
       log.info(`[IntentSummarizer] Cache MISS for pattern ${patternId}`);
@@ -119,14 +135,50 @@ export class IntentSummarizer {
         `[IntentSummarizer] Generated summaries for ${patternId}:\n  Short: "${summaries.short}"\n  Detailed: "${summaries.detailed}"`,
       );
 
-      return summaries;
+      return {
+        success: true,
+        short: summaries.short,
+        detailed: summaries.detailed,
+      };
     } catch (error) {
-      log.error("[IntentSummarizer] Summarization error:", error);
+      // Story 1.19 - AC 4: Log error with full context
+      log.error("[IntentSummarizer] LLM analysis failed", {
+        patternId,
+        attempt: retryCount + 1,
+        maxRetries: MAX_RETRIES,
+        error: error instanceof Error ? error.message : String(error),
+      });
 
-      // Fallback to template-based description (Story 1.12 - AC 5)
-      const fallback = this.generateFallbackSummary(patternId);
-      return { short: fallback, detailed: fallback };
+      // Story 1.19 - AC 4: Retry with exponential backoff
+      if (retryCount < MAX_RETRIES) {
+        const delay = RETRY_DELAYS[retryCount];
+        log.info(
+          `[IntentSummarizer] Retrying in ${delay}ms (attempt ${retryCount + 2}/${MAX_RETRIES + 1})`,
+        );
+
+        await this.delay(delay);
+        return this.summarizePattern(patternId, retryCount + 1);
+      }
+
+      // Story 1.19 - AC 1, 4: All retries exhausted - return failure (NO template fallback)
+      log.error("[IntentSummarizer] LLM analysis failed after retries", {
+        patternId,
+        attempts: MAX_RETRIES + 1,
+      });
+
+      return {
+        success: false,
+        error:
+          "Pattern analysis temporarily unavailable. Will retry automatically.",
+      };
     }
+  }
+
+  /**
+   * Delay helper for exponential backoff retry
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -526,91 +578,6 @@ DETAILED: [your 40-50 word description]`;
       log.info(`[IntentSummarizer] Cached summaries for pattern ${patternId}`);
     } catch (error) {
       log.error("[IntentSummarizer] Cache save error:", error);
-    }
-  }
-
-  /**
-   * Generate template-based fallback summary
-   * Story 1.12 - AC 5: Fallback when LLM fails
-   */
-  private generateFallbackSummary(patternId: string): string {
-    log.warn(
-      `[IntentSummarizer] Using fallback template for pattern ${patternId}`,
-    );
-
-    try {
-      const patternData = this.getPatternData(patternId);
-      if (!patternData) {
-        return "Repeated workflow detected";
-      }
-
-      if (
-        patternData.type === "navigation" &&
-        "sequence" in patternData.pattern_data
-      ) {
-        const navPattern = patternData.pattern_data as NavigationPattern;
-        const sites = navPattern.sequence
-          .map((s) => {
-            try {
-              return new URL(s.url).hostname;
-            } catch {
-              return "unknown";
-            }
-          })
-          .slice(0, 3); // Limit to first 3 sites
-
-        return `Repeated navigation: ${sites.join(" → ")}`;
-      } else if (
-        patternData.type === "form" &&
-        "fields" in patternData.pattern_data
-      ) {
-        const formPattern = patternData.pattern_data as FormPattern;
-        const fieldNames = formPattern.fields
-          .map((f) => f.label || f.name)
-          .slice(0, 3); // Limit to first 3 fields
-
-        return `Repeated form fill on ${formPattern.domain}: ${fieldNames.join(", ")}`;
-      } else if (
-        patternData.type === "copy-paste" &&
-        "pairs" in patternData.pattern_data
-      ) {
-        // Story 1.7b - AC 2: Copy/Paste fallback template (Bug fix: Handle same-site patterns)
-        const copyPastePattern = patternData.pattern_data as CopyPastePattern;
-        const firstPair = copyPastePattern.pairs[0];
-
-        if (!firstPair) {
-          return "Repeated copy/paste workflow detected";
-        }
-
-        const sourcePageTitle =
-          firstPair.sourcePageTitle || new URL(firstPair.sourceUrl).hostname;
-        const destinationPageTitle =
-          firstPair.destinationPageTitle ||
-          new URL(firstPair.destinationUrl).hostname;
-
-        // Detect same-site pattern
-        const sourceHost = new URL(firstPair.sourceUrl).hostname;
-        const destHost = new URL(firstPair.destinationUrl).hostname;
-        const isSameSite = sourceHost === destHost;
-
-        // Get copied text if available
-        const copiedText = firstPair.copiedText
-          ? `"${firstPair.copiedText.substring(0, 30)}${firstPair.copiedText.length > 30 ? "..." : ""}"`
-          : "content";
-
-        if (isSameSite) {
-          // Same-site: likely search/form workflow
-          return `Repeated search/form workflow on ${sourcePageTitle} using ${copiedText}`;
-        } else {
-          // Cross-site: data transfer
-          return `Repeated copy/paste: ${sourcePageTitle} → ${destinationPageTitle}`;
-        }
-      }
-
-      return "Repeated workflow detected";
-    } catch (error) {
-      log.error("[IntentSummarizer] Fallback generation error:", error);
-      return "Repeated workflow detected";
     }
   }
 }

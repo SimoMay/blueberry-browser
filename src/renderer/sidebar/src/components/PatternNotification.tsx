@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { Zap } from "lucide-react";
+import { Zap, Eye, EyeOff } from "lucide-react";
 import { Pattern } from "../contexts/PatternContext";
 import { usePattern } from "../hooks/usePattern";
 import { Badge } from "../../../common/components/Badge";
 import { Modal } from "../../../common/components/Modal";
 import { Button } from "../../../common/components/Button";
 import { Toast } from "../../../common/components/Toast";
+import { WorkflowDisplay } from "./WorkflowDisplay";
 
 /**
  * PatternNotification component
@@ -24,6 +25,7 @@ export const PatternNotification: React.FC = () => {
   const [toastType, setToastType] = useState<
     "success" | "error" | "warning" | "info"
   >("success");
+  const [showWorkflow, setShowWorkflow] = useState(false); // Story 1.19: Workflow preview toggle
 
   /**
    * Handle badge click - open modal with first pattern
@@ -117,8 +119,15 @@ export const PatternNotification: React.FC = () => {
 
   /**
    * Generate plain-language pattern description
+   * Story 1.19: Use LLM summaries instead of templates
    */
   const generatePatternDescription = (pattern: Pattern): string => {
+    // Story 1.19: Use LLM-generated summaries (all patterns have them now)
+    if (pattern.intentSummary) {
+      return `I noticed you've been ${pattern.intentSummary.toLowerCase()}`;
+    }
+
+    // Fallback for legacy patterns (shouldn't happen after Story 1.19)
     if (pattern.type === "navigation") {
       const sequence = pattern.patternData?.sequence || [];
       if (sequence.length > 0) {
@@ -167,6 +176,7 @@ export const PatternNotification: React.FC = () => {
     setModalOpen(false);
     setSelectedPattern(null);
     setShowConversionForm(false);
+    setShowWorkflow(false); // Story 1.19: Reset workflow preview
     setAutomationName("");
     setAutomationDescription("");
   };
@@ -226,6 +236,40 @@ export const PatternNotification: React.FC = () => {
                 {selectedPattern.lastSeen && (
                   <div>
                     Last seen: {formatTimestamp(selectedPattern.lastSeen)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Story 1.19: Workflow Preview Section */}
+            {selectedPattern.patternData?.steps && (
+              <div className="space-y-2">
+                <Button
+                  onClick={() => setShowWorkflow(!showWorkflow)}
+                  variant="ghost"
+                  size="sm"
+                  className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+                >
+                  {showWorkflow ? (
+                    <>
+                      <EyeOff className="w-4 h-4 mr-1" />
+                      Hide Workflow
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-4 h-4 mr-1" />
+                      Preview Workflow (
+                      {selectedPattern.patternData.steps.length} steps)
+                    </>
+                  )}
+                </Button>
+                {showWorkflow && (
+                  <div className="p-3 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <WorkflowDisplay
+                      workflow={selectedPattern.patternData}
+                      title="Workflow Steps"
+                      collapsible={false}
+                    />
                   </div>
                 )}
               </div>

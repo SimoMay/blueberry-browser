@@ -803,6 +803,54 @@ export class DatabaseManager {
           CREATE INDEX idx_patterns_created_at ON patterns(created_at);
         `,
       },
+      {
+        version: 11,
+        up: `
+          -- Story 1.19: Remove Template Fallbacks - Add LLM analysis failure tracking
+          -- Add fields to track failed pattern analyses and enable automatic retry
+          ALTER TABLE patterns ADD COLUMN analysis_failed BOOLEAN DEFAULT 0;
+          ALTER TABLE patterns ADD COLUMN retry_after INTEGER DEFAULT NULL;
+          ALTER TABLE patterns ADD COLUMN retry_count INTEGER DEFAULT 0;
+
+          -- Create index for automatic retry job (find failed patterns eligible for retry)
+          CREATE INDEX idx_patterns_retry ON patterns(analysis_failed, retry_after)
+            WHERE analysis_failed = 1 AND retry_after IS NOT NULL;
+        `,
+        down: `
+          -- Revert v11 migration: Remove analysis_failed tracking fields
+          CREATE TABLE patterns_v10_rollback (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('navigation', 'form', 'copy-paste')),
+            pattern_data TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            occurrence_count INTEGER DEFAULT 1,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            dismissed BOOLEAN DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            intent_summary TEXT,
+            summary_generated_at INTEGER,
+            intent_summary_detailed TEXT
+          );
+
+          -- Copy data without analysis_failed fields
+          INSERT INTO patterns_v10_rollback
+          SELECT
+            id, type, pattern_data, confidence, occurrence_count,
+            first_seen, last_seen, dismissed, created_at,
+            intent_summary, summary_generated_at, intent_summary_detailed
+          FROM patterns;
+
+          DROP TABLE patterns;
+          ALTER TABLE patterns_v10_rollback RENAME TO patterns;
+
+          -- Recreate indexes
+          CREATE INDEX idx_patterns_type ON patterns(type);
+          CREATE INDEX idx_patterns_confidence ON patterns(confidence);
+          CREATE INDEX idx_patterns_dismissed ON patterns(dismissed);
+          CREATE INDEX idx_patterns_created_at ON patterns(created_at);
+        `,
+      },
     ];
   }
 

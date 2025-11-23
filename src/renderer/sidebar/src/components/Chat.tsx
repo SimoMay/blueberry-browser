@@ -280,8 +280,8 @@ const generatePatternMessage = (
   const {
     patternType,
     occurrenceCount,
-    confidence,
     patternData,
+    intentSummary,
     intentSummaryDetailed,
   } = pattern;
 
@@ -291,10 +291,16 @@ const generatePatternMessage = (
     return `Hey! I noticed you've been ${intentSummaryDetailed.toLowerCase()}. Want to save this as an automation?`;
   }
 
-  // Fallback to template-based messages (Story 1.13 - AC 6)
+  // Story 1.19: Use SHORT summary if DETAILED not available (all patterns have LLM summaries now)
+  if (intentSummary) {
+    return `Hey! I noticed you've been ${intentSummary.toLowerCase()}. Want to save this as an automation?`;
+  }
+
+  // Fallback for legacy patterns without LLM summaries (shouldn't happen after Story 1.19)
+  // These patterns would have been created before the template removal
   if (patternType === "navigation" && patternData?.sequence) {
     const urls = patternData.sequence
-      .slice(0, 5) // Show first 5 URLs
+      .slice(0, 5)
       .map((s) => {
         try {
           const url = new URL(s.url);
@@ -305,20 +311,20 @@ const generatePatternMessage = (
       })
       .join(" → ");
 
-    return `I noticed you've been navigating ${urls} ${occurrenceCount} times recently. This looks like a workflow you repeat often. Would you like me to convert this into an automation to save time?`;
+    return `I noticed you've been navigating ${urls} ${occurrenceCount} times recently. Want to save this as an automation?`;
   }
 
   if (patternType === "form" && patternData?.domain) {
     const fieldCount = patternData.fields?.length || 0;
-    return `I've observed you filling out the ${patternData.domain} form (${fieldCount} fields) ${occurrenceCount} times. I can help automate this repetitive task. Would you like to save this as an automation?`;
+    return `I've observed you filling out the ${patternData.domain} form (${fieldCount} fields) ${occurrenceCount} times. Want to save this as an automation?`;
   }
 
   if (patternType === "copy-paste") {
-    return `I detected a copy/paste pattern that you've repeated ${occurrenceCount} times with ${confidence.toFixed(0)}% confidence. Would you like to convert this into an automation?`;
+    return `I detected a copy/paste pattern that you've repeated ${occurrenceCount} times. Want to save this as an automation?`;
   }
 
-  // Fallback generic message
-  return `I detected a ${patternType} pattern that you've repeated ${occurrenceCount} times with ${confidence.toFixed(0)}% confidence. Would you like to convert this into an automation?`;
+  // Final fallback
+  return `I detected a ${patternType} pattern that you've repeated ${occurrenceCount} times. Want to save this as an automation?`;
 };
 
 // Conversation Turn Component

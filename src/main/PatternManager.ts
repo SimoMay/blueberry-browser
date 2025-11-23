@@ -226,6 +226,9 @@ export class PatternManager {
       // Start copy event cleanup interval (Story 1.7b)
       this.startCopyEventCleanup();
 
+      // Start automatic retry background job (Story 1.19)
+      this.startAutomaticRetry();
+
       log.info("[PatternManager] Initialized successfully");
     } catch (error) {
       log.error("[PatternManager] Initialization failed:", error);
@@ -1348,18 +1351,45 @@ export class PatternManager {
           confidence: newConfidence,
         });
 
-        // Generate intent summaries if confidence >70% (Story 1.12 - AC 1)
+        // Generate intent summaries if confidence >70% (Story 1.12 - AC 1, Story 1.19 - AC 1)
         if (newConfidence > 70 && this.intentSummarizer) {
           try {
-            const summaries = await this.intentSummarizer.summarizePattern(
-              matchingPattern.id,
-            );
-            log.info(
-              `[PatternManager] Intent summaries for ${matchingPattern.id}:\n  Short: "${summaries.short}"\n  Detailed: "${summaries.detailed}"`,
-            );
+            const summaryResponse =
+              await this.intentSummarizer.summarizePattern(matchingPattern.id);
+
+            if (
+              summaryResponse.success &&
+              summaryResponse.short &&
+              summaryResponse.detailed
+            ) {
+              log.info(
+                `[PatternManager] Intent summaries for ${matchingPattern.id}:\n  Short: "${summaryResponse.short}"\n  Detailed: "${summaryResponse.detailed}"`,
+              );
+            } else {
+              // Story 1.19 - AC 1: LLM summarization failed after retries
+              log.warn(
+                `[PatternManager] Failed to generate intent summaries: ${summaryResponse.error}`,
+                { patternId: matchingPattern.id },
+              );
+              // Mark pattern as analysis_failed (intent summary failed)
+              // Note: Pattern is already saved, just mark it for retry
+              if (this.db) {
+                this.db
+                  .prepare(
+                    `
+                  UPDATE patterns
+                  SET analysis_failed = 1,
+                      retry_after = ?,
+                      retry_count = 1
+                  WHERE id = ?
+                `,
+                  )
+                  .run(Date.now() + 5 * 60 * 1000, matchingPattern.id);
+              }
+            }
           } catch (summaryError) {
             log.error(
-              "[PatternManager] Failed to generate intent summaries:",
+              "[PatternManager] Unexpected error generating intent summaries:",
               summaryError,
             );
             // Continue without summary - pattern is still usable
@@ -1549,9 +1579,25 @@ export class PatternManager {
       this.currentlyAnalyzing.add(action.type);
 
       try {
-        // Analyze with LLM
-        const analysis =
+        // Analyze with LLM (Story 1.19 - AC 2, 4: Returns success/error instead of throwing)
+        const analysisResponse =
           await this.llmAnalyzer.analyzeActionSequence(sameTypeActions);
+
+        if (!analysisResponse.success) {
+          // Story 1.19 - AC 1, 2: LLM analysis failed after retries, mark pattern as failed
+          log.error("[PatternManager] Pattern analysis failed", {
+            type: action.type,
+            error: analysisResponse.error,
+          });
+
+          // Save pattern as analysis_failed for automatic retry
+          await this.markPatternAsFailed(sameTypeActions, action.type);
+
+          // Don't create notification for failed patterns (Story 1.19 - AC 3)
+          return;
+        }
+
+        const analysis = analysisResponse.result!;
 
         if (analysis.isPattern && analysis.confidence > 70) {
           // LLM confirmed pattern with high confidence
@@ -1567,8 +1613,9 @@ export class PatternManager {
           const stmt = this.db.prepare(`
           INSERT INTO patterns (
             id, type, pattern_data, confidence, occurrence_count,
-            first_seen, last_seen, created_at, intent_summary, summary_generated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            first_seen, last_seen, created_at, intent_summary, summary_generated_at,
+            analysis_failed
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `);
 
           stmt.run(
@@ -1586,8 +1633,8 @@ export class PatternManager {
 
           log.info(`[PatternManager] Pattern saved: ${patternId}`);
 
-          // Create notification
-          if (this.notificationManager) {
+          // Create notification (Story 1.19 - AC 3: Only if intent_summary exists)
+          if (this.notificationManager && analysis.intentSummary) {
             await this.notificationManager.createNotification({
               type: "pattern",
               severity: "info",
@@ -1599,6 +1646,8 @@ export class PatternManager {
                 confidence: analysis.confidence,
                 occurrenceCount: sameTypeActions.length,
                 patternData: analysis.workflow,
+                intentSummary: analysis.intentSummary, // Story 1.19: Include for sidebar display
+                intentSummaryDetailed: analysis.intentSummary, // Same as short for now
               },
             });
           }
@@ -2234,11 +2283,226 @@ export class PatternManager {
   }
 
   /**
+   * Mark pattern as analysis_failed for automatic retry
+   * Story 1.19 - AC 1, 4: Save failed patterns with retry metadata
+   */
+  private async markPatternAsFailed(
+    actions: SessionAction[],
+    patternType: string,
+  ): Promise<void> {
+    if (!this.db) {
+      return;
+    }
+
+    try {
+      const retryAfter = Date.now() + 5 * 60 * 1000; // Retry after 5 minutes
+      const patternId = uuidv4();
+
+      const stmt = this.db.prepare(`
+        INSERT INTO patterns (
+          id, type, pattern_data, confidence, occurrence_count,
+          first_seen, last_seen, created_at,
+          analysis_failed, retry_after, retry_count
+        ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, 1, ?, 1)
+      `);
+
+      stmt.run(
+        patternId,
+        patternType,
+        JSON.stringify({ actions }), // Store actions for retry
+        actions.length,
+        actions[0].timestamp,
+        Date.now(),
+        Date.now(),
+        retryAfter,
+      );
+
+      log.info(
+        `[PatternManager] Pattern marked as analysis_failed, will retry after ${new Date(retryAfter).toISOString()}`,
+        { patternId, type: patternType },
+      );
+    } catch (error) {
+      log.error("[PatternManager] Failed to mark pattern as failed:", error);
+    }
+  }
+
+  /**
+   * Start automatic retry background job for failed patterns
+   * Story 1.19 - AC 4: Retry patterns every 5 minutes
+   */
+  private retryIntervalId: NodeJS.Timeout | null = null;
+
+  public startAutomaticRetry(): void {
+    // Run every 5 minutes
+    this.retryIntervalId = setInterval(
+      () => {
+        this.retryFailedPatterns().catch((error) => {
+          log.error("[PatternManager] Automatic retry failed:", error);
+        });
+      },
+      5 * 60 * 1000,
+    ); // 5 minutes
+
+    log.info("[PatternManager] Automatic retry job started (5 min interval)");
+  }
+
+  public stopAutomaticRetry(): void {
+    if (this.retryIntervalId) {
+      clearInterval(this.retryIntervalId);
+      this.retryIntervalId = null;
+      log.info("[PatternManager] Automatic retry job stopped");
+    }
+  }
+
+  /**
+   * Retry failed pattern analyses
+   * Story 1.19 - AC 4: Automatic retry logic
+   */
+  private async retryFailedPatterns(): Promise<void> {
+    if (!this.db) {
+      return;
+    }
+
+    try {
+      const now = Date.now();
+
+      // Find patterns eligible for retry
+      const stmt = this.db.prepare(`
+        SELECT id, type, pattern_data, retry_count
+        FROM patterns
+        WHERE analysis_failed = 1
+          AND retry_after <= ?
+          AND retry_count < 10
+        LIMIT 5
+      `);
+
+      const failedPatterns = stmt.all(now) as Array<{
+        id: string;
+        type: string;
+        pattern_data: string;
+        retry_count: number;
+      }>;
+
+      if (failedPatterns.length === 0) {
+        return;
+      }
+
+      log.info(
+        `[PatternManager] Retrying ${failedPatterns.length} failed patterns`,
+      );
+
+      for (const pattern of failedPatterns) {
+        try {
+          const data = JSON.parse(pattern.pattern_data);
+          const actions = data.actions as SessionAction[];
+
+          // Ensure LLM analyzer is initialized
+          if (!this.llmAnalyzer) {
+            log.warn(
+              "[PatternManager] LLM analyzer not initialized, skipping retry",
+            );
+            continue;
+          }
+
+          // Attempt LLM analysis again
+          const analysisResponse =
+            await this.llmAnalyzer.analyzeActionSequence(actions);
+
+          if (analysisResponse.success && analysisResponse.result) {
+            const analysis = analysisResponse.result;
+
+            if (analysis.isPattern && analysis.confidence > 70) {
+              // Success - update pattern with summary
+              const updateStmt = this.db!.prepare(`
+                UPDATE patterns
+                SET intent_summary = ?,
+                    summary_generated_at = ?,
+                    analysis_failed = 0,
+                    retry_after = NULL,
+                    confidence = ?,
+                    pattern_data = ?
+                WHERE id = ?
+              `);
+
+              updateStmt.run(
+                analysis.intentSummary,
+                now,
+                analysis.confidence,
+                JSON.stringify(analysis.workflow),
+                pattern.id,
+              );
+
+              log.info("[PatternManager] Retry successful", {
+                patternId: pattern.id,
+              });
+
+              // Create notification
+              if (this.notificationManager && analysis.intentSummary) {
+                await this.notificationManager.createNotification({
+                  type: "pattern",
+                  severity: "info",
+                  title: "Pattern detected",
+                  message: `I noticed you're ${analysis.intentSummary}. Want me to help?`,
+                  data: {
+                    id: pattern.id,
+                    type: pattern.type,
+                    confidence: analysis.confidence,
+                    occurrenceCount: actions.length,
+                    patternData: analysis.workflow,
+                    intentSummary: analysis.intentSummary, // Story 1.19: Include for sidebar display
+                    intentSummaryDetailed: analysis.intentSummary, // Same as short for now
+                  },
+                });
+              }
+            } else {
+              // LLM rejected pattern - delete it
+              this.db!.prepare("DELETE FROM patterns WHERE id = ?").run(
+                pattern.id,
+              );
+              log.info(
+                "[PatternManager] Retry successful but pattern rejected, deleted",
+                { patternId: pattern.id },
+              );
+            }
+          } else {
+            // Still failing - increment retry count, update retry_after
+            const nextRetry = Date.now() + 10 * 60 * 1000; // 10 minutes later
+
+            this.db!.prepare(
+              `
+              UPDATE patterns
+              SET retry_count = retry_count + 1,
+                  retry_after = ?
+              WHERE id = ?
+            `,
+            ).run(nextRetry, pattern.id);
+
+            log.warn("[PatternManager] Retry failed, will try again", {
+              patternId: pattern.id,
+              nextRetry: new Date(nextRetry).toISOString(),
+            });
+          }
+        } catch (error) {
+          log.error("[PatternManager] Error retrying pattern", {
+            patternId: pattern.id,
+            error,
+          });
+        }
+      }
+    } catch (error) {
+      log.error("[PatternManager] retryFailedPatterns error:", error);
+    }
+  }
+
+  /**
    * Clean up resources
    */
   public async cleanup(): Promise<void> {
     try {
       log.info("[PatternManager] Cleaning up...");
+
+      // Stop automatic retry interval (Story 1.19)
+      this.stopAutomaticRetry();
 
       // Stop copy event cleanup interval (Story 1.7b)
       if (this.copyEventCleanupInterval) {

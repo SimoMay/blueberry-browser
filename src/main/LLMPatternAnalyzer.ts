@@ -47,12 +47,14 @@ export interface SessionAction {
 /**
  * LLMPatternAnalyzer - AI-powered pattern detection engine
  * Story 1.15: Replaces deterministic PatternRecognizer with LLM intelligence
+ * Updated Story 1.19: Remove Template Fallbacks (LLM-only, no heuristics)
  *
  * Features:
  * - Asks LLM "Is this a pattern?" with full context (page titles, element text, tab switches)
- * - <2 second response time using fast models (GPT-4o-mini, Claude Haiku)
+ * - <30 second timeout (Gemini API can be slow, cross-tab analysis needs time)
  * - Cross-tab workflow support (ProductHunt → Notion)
- * - Fallback to simple heuristics on LLM failure
+ * - Exponential backoff retry on LLM failure (3 attempts: 2s, 4s, 8s delays)
+ * - NO fallback heuristics - pattern detection fails if LLM unavailable
  * - Cost optimized: <$0.001 per pattern detection
  */
 export class LLMPatternAnalyzer {
@@ -93,20 +95,25 @@ export class LLMPatternAnalyzer {
 
   /**
    * Analyze action sequence to determine if it's a pattern
-   * Story 1.15 - AC 1, 2, 3, 4
+   * Story 1.15 - AC 1, 2, 3
+   * Story 1.19 - AC 2, 4: Exponential backoff retry, no fallback heuristics
    *
    * @param actions - Array of 2-3 user actions (navigation, form, copy-paste)
-   * @param context - Tab states and page context
+   * @param retryCount - Current retry attempt (0-3)
    * @returns LLM analysis result with pattern decision + metadata
    */
   async analyzeActionSequence(
     actions: Array<SessionAction>,
-  ): Promise<LLMAnalysisResult> {
+    retryCount: number = 0,
+  ): Promise<{ success: boolean; result?: LLMAnalysisResult; error?: string }> {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAYS = [2000, 4000, 8000]; // Exponential backoff: 2s, 4s, 8s
+
     try {
       // Build rich context prompt with page titles, element text, tab switches
       const prompt = this.buildLLMPrompt(actions);
 
-      // Call LLM with timeout enforcement (<2 seconds)
+      // Call LLM with timeout enforcement (30 seconds)
       const response = await Promise.race([
         this.callLLM(prompt),
         new Promise<never>((_, reject) =>
@@ -126,16 +133,46 @@ export class LLMPatternAnalyzer {
         intent: result.intentSummary,
       });
 
-      return result;
+      return { success: true, result };
     } catch (error) {
-      log.error(
-        "[LLMPatternAnalyzer] LLM analysis failed, using fallback",
-        error,
-      );
+      // Story 1.19 - AC 4: Log error with full context
+      log.error("[LLMPatternAnalyzer] LLM analysis failed", {
+        attempt: retryCount + 1,
+        maxRetries: MAX_RETRIES,
+        actionCount: actions.length,
+        actionTypes: actions.map((a) => a.type),
+        error: error instanceof Error ? error.message : String(error),
+      });
 
-      // Fallback to simple heuristics (Story 1.15 - AC 4)
-      return this.analyzeWithFallback(actions);
+      // Story 1.19 - AC 4: Retry with exponential backoff
+      if (retryCount < MAX_RETRIES) {
+        const delay = RETRY_DELAYS[retryCount];
+        log.info(
+          `[LLMPatternAnalyzer] Retrying in ${delay}ms (attempt ${retryCount + 2}/${MAX_RETRIES + 1})`,
+        );
+
+        await this.delay(delay);
+        return this.analyzeActionSequence(actions, retryCount + 1);
+      }
+
+      // Story 1.19 - AC 2, 4: All retries exhausted - return failure (NO fallback heuristics)
+      log.error("[LLMPatternAnalyzer] LLM analysis failed after retries", {
+        attempts: MAX_RETRIES + 1,
+      });
+
+      return {
+        success: false,
+        error:
+          "Pattern analysis temporarily unavailable. Will retry automatically.",
+      };
     }
+  }
+
+  /**
+   * Delay helper for exponential backoff retry
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -228,6 +265,10 @@ RESPOND IN JSON FORMAT:
       {
         "action": string,
         "target": string,
+        "selector": string | null,
+        "elementContext": string | null,
+        "actionDetail": string,
+        "url": string | null,
         "tabId": string,
         "tabTitle": string,
         "tabUrl": string
@@ -237,14 +278,34 @@ RESPOND IN JSON FORMAT:
   "rejectionReason": string | null
 }
 
+WORKFLOW STEP FIELD DETAILS:
+- action: Type of action (e.g., "click", "copy", "paste", "navigate", "type")
+- target: What element to interact with (e.g., "comment link", "search bar", "article title")
+- selector: CSS selector or element description (e.g., "a.storylink", "input[name='q']", "first link in comments section")
+- elementContext: Where on the page (e.g., "in comments section", "at top of page", "first result", "third item in list")
+- actionDetail: Specific action to perform (e.g., "copy text content", "click and wait for page load", "paste and press Enter")
+- url: Expected URL after navigation (if applicable, use patterns like "https://news.ycombinator.com/item?id=*")
+- tabId/tabTitle/tabUrl: Tab metadata for cross-tab workflows
+
+IMPORTANT - MAXIMIZE DETAIL FOR AUTOMATION:
+- Provide as much context as possible for each step to enable reliable automation
+- Include CSS selectors when you can infer them from element descriptions (e.g., "input[name='q']" for Google search)
+- Specify element position/context (e.g., "first comment link", "third item in results list")
+- Detail the exact action (e.g., "copy text content of link", "paste and press Enter key")
+- Include expected URLs after navigation (use wildcards like "*/item?id=*" for dynamic parts)
+- For clicks: specify if it opens new tab, navigates current tab, or triggers action
+- For text input: specify if you need to clear existing text, press Enter, click submit button
+
 IMPORTANT FOR CROSS-TAB WORKFLOWS:
 - Include tab metadata (tabId, tabTitle, tabUrl) for each action step
 - DO NOT create explicit "tab_switch" action steps - tab switches are inferred from tabId changes
-- Generalize patterns - describe WHAT to do, not specific data values
-  Example: "click next trending product" NOT "click Google Nano Banana Pro"
-  Example: "copy product details" NOT "copy 'Google Nano Banana Pro: Gemini 3 Pro...'"
-- Avoid literal URLs and page titles in action descriptions
-- Focus on the repeatable workflow pattern, not specific instance data`;
+- Be SPECIFIC about websites, domains, and UI elements (e.g., "Hacker News", "Google", "comment link")
+- Only generalize the actual DATA values (text content, product names, etc.)
+  Example: "click comment link on Hacker News" NOT "click link on news feed"
+  Example: "copy article title from Hacker News" NOT "copy headline from news site"
+  Example: "paste into Google search" NOT "paste into search engine"
+- Keep site names and UI element descriptions specific and recognizable
+- Focus on capturing the exact workflow with real site names, not generic categories`;
   }
 
   /**
@@ -331,75 +392,5 @@ IMPORTANT FOR CROSS-TAB WORKFLOWS:
       log.error("[LLMPatternAnalyzer] Failed to parse LLM response:", error);
       throw new Error("Invalid LLM response format");
     }
-  }
-
-  /**
-   * Fallback to simple heuristics when LLM fails
-   * Story 1.15 - AC 4: Silent fallback, no user interruption
-   */
-  private analyzeWithFallback(
-    actions: Array<SessionAction>,
-  ): LLMAnalysisResult {
-    log.info(
-      `[LLMPatternAnalyzer] Using fallback heuristics for ${actions.length} actions`,
-    );
-
-    // Simple heuristic: Same action type repeated 3+ times
-    const actionTypes = actions.map((a) => {
-      if (a.type === "navigation") {
-        return `${a.type}-${a.url}`;
-      } else if (a.type === "form") {
-        return `${a.type}-${a.domain}-${a.formSelector}`;
-      } else if (a.type === "copy-paste") {
-        return `${a.type}-${a.sourceUrl}-${a.destinationUrl}`;
-      }
-      return a.type;
-    });
-
-    const uniqueTypes = new Set(actionTypes);
-
-    if (actions.length >= 3 && uniqueTypes.size === 1) {
-      // Same action repeated 3+ times → likely pattern
-      const action = actions[0];
-      let intentSummary = "performing a repeated workflow";
-
-      if (action.type === "navigation" && action.url) {
-        try {
-          const hostname = new URL(action.url).hostname;
-          intentSummary = `navigating through ${hostname}`;
-        } catch {
-          intentSummary = "navigating through pages";
-        }
-      } else if (action.type === "form") {
-        intentSummary = `filling out forms on ${action.domain || "a website"}`;
-      } else if (action.type === "copy-paste") {
-        intentSummary = "copying and pasting content between pages";
-      }
-
-      return {
-        isPattern: true,
-        confidence: 50, // Lower confidence for fallback (Story 1.15 - AC 4)
-        intentSummary,
-        workflow: {
-          steps: actions.map((a) => ({
-            type: a.type,
-            url: a.url,
-            timestamp: a.timestamp,
-            tabId: a.tabId,
-          })),
-        },
-        rejectionReason: null,
-      };
-    }
-
-    // No pattern detected
-    return {
-      isPattern: false,
-      confidence: 0,
-      intentSummary: "",
-      workflow: { steps: [] },
-      rejectionReason:
-        "Actions do not form a repetitive pattern (fallback heuristic)",
-    };
   }
 }
