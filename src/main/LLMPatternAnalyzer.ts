@@ -339,7 +339,14 @@ IMPORTANT FOR CROSS-TAB WORKFLOWS:
     const { text } = await generateText({
       model,
       prompt,
-      temperature: 0.3, // Low temperature for consistent, focused output
+      /**
+       * Temperature: 0.3 (Deterministic - Pattern Detection)
+       * Rationale: Low temperature ensures consistent pattern detection decisions.
+       * We need the AI to reliably identify workflows vs. random actions with
+       * minimal variance between runs. Higher temperatures could cause inconsistent
+       * pattern detection (same actions detected as pattern one time, not another).
+       */
+      temperature: 0.3,
     });
 
     log.info(

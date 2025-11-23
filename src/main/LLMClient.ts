@@ -1,4 +1,5 @@
 import { WebContents } from "electron";
+import log from "electron-log";
 import {
   streamText,
   generateText,
@@ -34,6 +35,14 @@ const DEFAULT_MODELS: Record<LLMProvider, string> = {
 };
 
 const MAX_CONTEXT_LENGTH = 4000;
+
+/**
+ * Temperature: 0.7 (Conversational)
+ * Rationale: Higher temperature (0.7) allows for more natural, varied, and creative
+ * responses in chat interactions. This is appropriate for user-facing conversations
+ * where we want the AI to be helpful, engaging, and adaptable to different question styles.
+ * Lower values would make responses too mechanical and repetitive.
+ */
 const DEFAULT_TEMPERATURE = 0.7;
 
 export class LLMClient {
@@ -115,7 +124,7 @@ export class LLMClient {
 
   private logInitializationStatus(): void {
     if (this.model) {
-      console.log(
+      log.info(
         `✅ LLM Client initialized with ${this.provider} provider using model: ${this.modelName}`,
       );
     } else {
@@ -125,7 +134,7 @@ export class LLMClient {
           : this.provider === "gemini"
             ? "GEMINI_API_KEY"
             : "OPENAI_API_KEY";
-      console.error(
+      log.error(
         `❌ LLM Client initialization failed: ${keyName} not found in environment variables.\n` +
           `Please add your API key to the .env file in the project root.`,
       );
@@ -143,7 +152,7 @@ export class LLMClient {
             const image = await activeTab.screenshot();
             screenshot = image.toDataURL();
           } catch (error) {
-            console.error("Failed to capture screenshot:", error);
+            log.error("Failed to capture screenshot:", error);
           }
         }
       }
@@ -189,7 +198,7 @@ export class LLMClient {
       const messages = await this.prepareMessagesWithContext();
       await this.streamResponse(messages, request.messageId);
     } catch (error) {
-      console.error("Error in LLM request:", error);
+      log.error("Error in LLM request:", error);
       this.handleStreamError(error, request.messageId);
     }
   }
@@ -219,7 +228,7 @@ export class LLMClient {
         try {
           pageText = await activeTab.getTabText();
         } catch (error) {
-          console.error("Failed to get page text:", error);
+          log.error("Failed to get page text:", error);
         }
       }
     }
@@ -277,7 +286,7 @@ export class LLMClient {
     const result = await streamText({
       model: this.model,
       messages,
-      temperature: DEFAULT_TEMPERATURE,
+      temperature: DEFAULT_TEMPERATURE, // 0.7 for natural conversational responses
       maxRetries: 3,
       abortSignal: undefined, // Could add abort controller for cancellation
     });
@@ -332,7 +341,7 @@ export class LLMClient {
   }
 
   private handleStreamError(error: unknown, messageId: string): void {
-    console.error("Error streaming from LLM:", error);
+    log.error("Error streaming from LLM:", error);
 
     const errorMessage = this.getErrorMessage(error);
     this.sendErrorMessage(messageId, errorMessage);
@@ -412,7 +421,7 @@ export class LLMClient {
     const result = await generateText({
       model: this.model,
       messages,
-      temperature: options?.temperature ?? 0.7,
+      temperature: options?.temperature ?? 0.7, // Default 0.7 for conversational, can override for structured tasks
       maxRetries: 3,
     });
 

@@ -253,6 +253,12 @@ Be brief and helpful.`;
     log.info("[WorkflowRefiner] Generating chat response...");
 
     const response = await this.llmClient.completeText(prompt, {
+      /**
+       * Temperature: 0.7 (Conversational - User Interaction)
+       * Rationale: Higher temperature for natural, engaging conversation with users
+       * during workflow refinement. We want varied, helpful responses that feel
+       * conversational, not robotic. Lower values would make the AI too rigid.
+       */
       temperature: 0.7,
     });
 
@@ -340,7 +346,14 @@ Be specific: include full URLs, search terms, selectors, values.`;
       model: this.llmClient.getModel(),
       schema,
       prompt,
-      temperature: 0.3, // More deterministic for workflow generation
+      /**
+       * Temperature: 0.3 (Deterministic - Workflow Generation)
+       * Rationale: Low temperature for consistent, structured workflow output.
+       * We need deterministic JSON with valid selectors and actions. Higher
+       * temperature could introduce variance in workflow structure or invalid
+       * CSS selectors, breaking execution reliability.
+       */
+      temperature: 0.3,
     });
 
     const timeoutPromise = new Promise((_, reject) => {

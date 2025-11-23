@@ -1,4 +1,5 @@
 import { contextBridge } from "electron";
+import log from "electron-log";
 import { electronAPI } from "@electron-toolkit/preload";
 
 // TopBar specific APIs
@@ -45,7 +46,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld("electron", electronAPI);
     contextBridge.exposeInMainWorld("topBarAPI", topBarAPI);
   } catch (error) {
-    console.error(error);
+    log.error(error);
   }
 } else {
   // @ts-ignore (define in dts)

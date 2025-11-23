@@ -1,4 +1,5 @@
 import { ipcMain, WebContents } from "electron";
+import log from "electron-log";
 import type { Window } from "./Window";
 import { NotificationManager } from "./NotificationManager";
 import {
@@ -1499,7 +1500,7 @@ export class EventManager {
         try {
           return await this.mainWindow.activeTab.getTabHtml();
         } catch (error) {
-          console.error("Error getting page content:", error);
+          log.error("Error getting page content:", error);
           return null;
         }
       }
@@ -1512,7 +1513,7 @@ export class EventManager {
         try {
           return await this.mainWindow.activeTab.getTabText();
         } catch (error) {
-          console.error("Error getting page text:", error);
+          log.error("Error getting page text:", error);
           return null;
         }
       }
@@ -1537,7 +1538,7 @@ export class EventManager {
 
   private handleDebugEvents(): void {
     // Ping test
-    ipcMain.on("ping", () => console.log("pong"));
+    ipcMain.on("ping", () => log.info("pong"));
   }
 
   private broadcastDarkMode(sender: WebContents, isDarkMode: boolean): void {

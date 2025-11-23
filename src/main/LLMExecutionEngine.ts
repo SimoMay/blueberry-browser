@@ -15,6 +15,26 @@ import { join } from "path";
 dotenv.config({ path: join(__dirname, "../../.env") });
 
 /**
+ * Screenshot thumbnail width for progress display (small for efficient transmission)
+ */
+const SCREENSHOT_THUMBNAIL_WIDTH = 320;
+
+/**
+ * Screenshot width for vision AI processing (balance between detail and token cost)
+ */
+const SCREENSHOT_VISION_WIDTH = 640;
+
+/**
+ * Text preview length for element labels and extracted content (100 chars keeps context while reducing noise)
+ */
+const TEXT_PREVIEW_LENGTH = 100;
+
+/**
+ * Page settle poll interval in milliseconds (check every 100ms if page is ready)
+ */
+const PAGE_SETTLE_POLL_INTERVAL_MS = 100;
+
+/**
  * Page state captured before each LLM decision
  */
 interface PageState {
@@ -334,8 +354,10 @@ export class LLMExecutionEngine {
         let screenshotBase64: string | undefined;
         try {
           const screenshot = await activeTab.screenshot();
-          // Resize to small thumbnail (320px width) for efficient transmission
-          const thumbnail = screenshot.resize({ width: 320 });
+          // Resize to small thumbnail for efficient transmission
+          const thumbnail = screenshot.resize({
+            width: SCREENSHOT_THUMBNAIL_WIDTH,
+          });
           screenshotBase64 = thumbnail.toDataURL();
         } catch (error) {
           log.warn(
@@ -411,8 +433,8 @@ export class LLMExecutionEngine {
 
       // Take screenshot (AC 1)
       const screenshot = await activeTab.screenshot();
-      // Resize to 640px width for faster processing and reduced tokens, use PNG for compatibility
-      const resized = screenshot.resize({ width: 640 });
+      // Resize for faster vision processing and reduced tokens
+      const resized = screenshot.resize({ width: SCREENSHOT_VISION_WIDTH });
       const screenshotBase64 = resized.toDataURL();
 
       // Build messages with vision
@@ -464,8 +486,8 @@ export class LLMExecutionEngine {
       try {
         const prompt = this.buildLLMPrompt(automationData, workflow, pageState);
         const screenshot = await activeTab.screenshot();
-        // Resize to 640px width for faster processing and reduced tokens, use PNG for compatibility
-        const resized = screenshot.resize({ width: 640 });
+        // Resize for faster vision processing and reduced tokens
+        const resized = screenshot.resize({ width: SCREENSHOT_VISION_WIDTH });
         const screenshotBase64 = resized.toDataURL();
 
         const messages: CoreMessage[] = [
@@ -513,7 +535,14 @@ export class LLMExecutionEngine {
     const result = await generateText({
       model: this.model,
       messages,
-      temperature: 0.3, // Low temperature for consistent structured output
+      /**
+       * Temperature: 0.3 (Deterministic - Workflow Execution)
+       * Rationale: Low temperature ensures consistent, reliable automation execution.
+       * The AI must make deterministic decisions about which elements to click,
+       * what to type, and when to complete. Higher temperature could cause the
+       * same workflow to execute differently each time (unreliable automation).
+       */
+      temperature: 0.3,
       maxRetries: 0, // We handle retries manually
       // Note: maxTokens not available in current AI SDK version
       // Response length naturally limited by JSON format constraint
@@ -946,7 +975,9 @@ Return ONLY valid JSON, no markdown code blocks.`;
           return;
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise((resolve) =>
+          setTimeout(resolve, PAGE_SETTLE_POLL_INTERVAL_MS),
+        );
       }
 
       log.warn("[LLMExecutionEngine] Page settle timeout");
@@ -1012,7 +1043,7 @@ Return ONLY valid JSON, no markdown code blocks.`;
                   tag,
                   selector,
                   label: text,
-                  text: text.substring(0, 100),
+                  text: text.substring(0, TEXT_PREVIEW_LENGTH),
                   hasText: true,
                   isGeneric: false,
                   isCookieButton: true
@@ -1056,8 +1087,8 @@ Return ONLY valid JSON, no markdown code blocks.`;
               return {
                 tag,
                 selector,
-                label: label.substring(0, 100), // Keep more context
-                text: text.substring(0, 100), // Keep more text
+                label: label.substring(0, TEXT_PREVIEW_LENGTH),
+                text: text.substring(0, TEXT_PREVIEW_LENGTH),
                 hasText: text.length > 0,
                 isGeneric: selector === tag, // Flag generic selectors
                 isCookieButton: isCookieButton || false
@@ -1164,7 +1195,7 @@ Return ONLY valid JSON, no markdown code blocks.`;
             // Extract from headings (h1, h2, h3) - most likely to be product titles, article titles, etc.
             const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
               .map(el => el.textContent?.trim())
-              .filter(text => text && text.length > 0 && text.length < 100)
+              .filter(text => text && text.length > 0 && text.length < ${TEXT_PREVIEW_LENGTH})
               .slice(0, 5); // Top 5 headings
 
             // Extract from elements with common content classes
@@ -1172,7 +1203,7 @@ Return ONLY valid JSON, no markdown code blocks.`;
               document.querySelectorAll('[class*="title"], [class*="name"], [class*="heading"], [data-id]')
             )
               .map(el => el.textContent?.trim())
-              .filter(text => text && text.length > 0 && text.length < 100)
+              .filter(text => text && text.length > 0 && text.length < ${TEXT_PREVIEW_LENGTH})
               .slice(0, 5); // Top 5 content elements
 
             // Combine and deduplicate
@@ -1184,7 +1215,7 @@ Return ONLY valid JSON, no markdown code blocks.`;
         if (Array.isArray(extractedTexts) && extractedTexts.length > 0) {
           const extracted = extractedTexts.join(" | ");
           log.info(
-            `[LLMExecutionEngine] Extracted content from page: "${extracted.substring(0, 100)}..."`,
+            `[LLMExecutionEngine] Extracted content from page: "${extracted.substring(0, TEXT_PREVIEW_LENGTH)}..."`,
           );
           return extracted;
         }

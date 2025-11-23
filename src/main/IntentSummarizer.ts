@@ -38,6 +38,13 @@ const DEFAULT_MODELS: Record<string, string> = {
   gemini: "gemini-1.5-flash",
 };
 
+/**
+ * Cache TTL in milliseconds (1 hour)
+ * Intent summaries are cached to minimize API costs and improve performance.
+ * After 1 hour, summaries are regenerated to reflect any changes in pattern data.
+ */
+const CACHE_TTL_MS = 60 * 60 * 1000; // 3600000ms = 1 hour
+
 export class IntentSummarizer {
   private static instance: IntentSummarizer | null = null;
   private db: Database.Database;
@@ -212,9 +219,9 @@ export class IntentSummarizer {
         return null;
       }
 
-      // Check if cache is still valid (1 hour = 3600000ms)
+      // Check if cache is still valid
       const age = Date.now() - row.summary_generated_at;
-      if (age > 3600000) {
+      if (age > CACHE_TTL_MS) {
         log.info(
           `[IntentSummarizer] Cache expired for pattern ${patternId} (age: ${Math.round(age / 1000)}s)`,
         );
@@ -533,7 +540,14 @@ DETAILED: [your 40-50 word description]`;
     const { text } = await generateText({
       model,
       prompt,
-      temperature: 0.3, // Low temperature for consistent, focused output
+      /**
+       * Temperature: 0.3 (Deterministic - Intent Summarization)
+       * Rationale: Low temperature generates consistent, predictable summaries for
+       * similar patterns. Users expect the same pattern to get the same summary
+       * each time. Higher temperature would produce unnecessarily varied summaries
+       * for identical workflows, confusing users.
+       */
+      temperature: 0.3,
       // Note: maxTokens not available in generateText - control via prompt instead
     });
 
