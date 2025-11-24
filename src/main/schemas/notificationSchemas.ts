@@ -28,7 +28,6 @@ export const CreateNotificationSchema = z.object({
  */
 export const DismissNotificationSchema = z.object({
   notificationId: z
-    .string()
     .uuid({ message: "Invalid notification ID format" })
     .transform(createNotificationId),
 });

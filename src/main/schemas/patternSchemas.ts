@@ -72,7 +72,6 @@ export const SaveAutomationSchema = z.object({
  */
 export const ExecuteAutomationSchema = z.object({
   automation_id: z
-    .string()
     .uuid({ message: "Invalid automation ID format" })
     .transform(createAutomationId),
 });
@@ -83,7 +82,6 @@ export const ExecuteAutomationSchema = z.object({
  */
 export const EditAutomationSchema = z.object({
   automationId: z
-    .string()
     .uuid({ message: "Invalid automation ID format" })
     .transform(createAutomationId),
   name: z
@@ -102,7 +100,6 @@ export const EditAutomationSchema = z.object({
  */
 export const DeleteAutomationSchema = z.object({
   automationId: z
-    .string()
     .uuid({ message: "Invalid automation ID format" })
     .transform(createAutomationId),
 });
@@ -173,7 +170,6 @@ export const DismissPatternSchema = z.object({
  */
 export const StartRefinementSchema = z.object({
   automationId: z
-    .string()
     .uuid({ message: "Invalid automation ID format" })
     .transform(createAutomationId),
 });
