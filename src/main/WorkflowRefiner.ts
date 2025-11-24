@@ -3,6 +3,7 @@ import { z } from "zod";
 import { generateObject } from "ai";
 import { LLMClient } from "./LLMClient";
 import { PatternManager } from "./PatternManager";
+import { type AutomationId } from "./types/brandedTypes";
 
 /**
  * Workflow type classification
@@ -22,7 +23,7 @@ interface ConversationMessage {
  */
 interface RefinementConversationState {
   conversationId: string;
-  automationId: string;
+  automationId: AutomationId;
   automationName: string;
   workflowType: WorkflowType;
   originalWorkflow: Record<string, unknown>;
@@ -56,7 +57,7 @@ export class WorkflowRefiner {
   /**
    * Start a new refinement conversation for an automation
    */
-  async startRefinementConversation(automationId: string): Promise<{
+  async startRefinementConversation(automationId: AutomationId): Promise<{
     conversationId: string;
     greeting: string;
     firstQuestion: string;

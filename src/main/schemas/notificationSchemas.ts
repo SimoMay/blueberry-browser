@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { NotificationId } from "../types/brandedTypes";
+import { createNotificationId } from "../types/brandedTypes";
 
 /**
  * Notification type schema
@@ -24,11 +24,13 @@ export const CreateNotificationSchema = z.object({
 
 /**
  * Dismiss notification input schema
+ * Uses .transform() to return branded NotificationId for type safety
  */
 export const DismissNotificationSchema = z.object({
   notificationId: z
     .string()
-    .uuid({ message: "Invalid notification ID format" }),
+    .uuid({ message: "Invalid notification ID format" })
+    .transform(createNotificationId),
 });
 
 /**
@@ -39,16 +41,11 @@ export const GetNotificationsSchema = z.object({
 });
 
 /**
- * Type exports for TypeScript (with branded types for type safety)
+ * Type exports for TypeScript
+ * Branded types are automatically inferred from .transform() now
  */
 export type CreateNotificationInput = z.infer<typeof CreateNotificationSchema>;
-
-// Override Zod inference to use branded NotificationId
-export type DismissNotificationInput = Omit<
-  z.infer<typeof DismissNotificationSchema>,
-  "notificationId"
-> & {
-  notificationId: NotificationId;
-};
-
+export type DismissNotificationInput = z.infer<
+  typeof DismissNotificationSchema
+>;
 export type GetNotificationsInput = z.infer<typeof GetNotificationsSchema>;

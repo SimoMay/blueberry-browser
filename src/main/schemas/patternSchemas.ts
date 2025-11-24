@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { PatternId, AutomationId, TabId } from "../types/brandedTypes";
+import {
+  createPatternId,
+  createAutomationId,
+  createTabId,
+} from "../types/brandedTypes";
 
 /**
  * Pattern type schema
@@ -47,10 +52,13 @@ export const PatternGetAllSchema = z
 
 /**
  * Save automation input schema
- * Note: pattern_id validates as string at runtime (Zod), but TypeScript type uses branded PatternId
+ * Uses .transform() to return branded PatternId for type safety
  */
 export const SaveAutomationSchema = z.object({
-  pattern_id: z.string().min(1, { message: "Pattern ID is required" }),
+  pattern_id: z
+    .string()
+    .min(1, { message: "Pattern ID is required" })
+    .transform(createPatternId),
   name: z
     .string()
     .min(1, { message: "Name is required" })
@@ -60,16 +68,24 @@ export const SaveAutomationSchema = z.object({
 
 /**
  * Execute automation input schema
+ * Uses .transform() to return branded AutomationId for type safety
  */
 export const ExecuteAutomationSchema = z.object({
-  automation_id: z.string().uuid({ message: "Invalid automation ID format" }),
+  automation_id: z
+    .string()
+    .uuid({ message: "Invalid automation ID format" })
+    .transform(createAutomationId),
 });
 
 /**
  * Edit automation input schema
+ * Uses .transform() to return branded AutomationId for type safety
  */
 export const EditAutomationSchema = z.object({
-  automationId: z.string().uuid({ message: "Invalid automation ID format" }),
+  automationId: z
+    .string()
+    .uuid({ message: "Invalid automation ID format" })
+    .transform(createAutomationId),
   name: z
     .string()
     .min(1, { message: "Name is required" })
@@ -82,13 +98,18 @@ export const EditAutomationSchema = z.object({
 
 /**
  * Delete automation input schema
+ * Uses .transform() to return branded AutomationId for type safety
  */
 export const DeleteAutomationSchema = z.object({
-  automationId: z.string().uuid({ message: "Invalid automation ID format" }),
+  automationId: z
+    .string()
+    .uuid({ message: "Invalid automation ID format" })
+    .transform(createAutomationId),
 });
 
 /**
  * Copy/Paste event schemas (Story 1.7b)
+ * Uses .transform() to return branded TabId for type safety
  */
 export const CopyEventSchema = z.object({
   text: z.string(),
@@ -96,7 +117,7 @@ export const CopyEventSchema = z.object({
   url: z.string().url({ message: "Invalid source URL" }),
   pageTitle: z.string(),
   timestamp: z.number().int().positive(),
-  tabId: z.string(),
+  tabId: z.string().transform(createTabId),
 });
 
 export const PasteEventSchema = z.object({
@@ -104,21 +125,28 @@ export const PasteEventSchema = z.object({
   url: z.string().url({ message: "Invalid destination URL" }),
   pageTitle: z.string(),
   timestamp: z.number().int().positive(),
-  tabId: z.string(),
+  tabId: z.string().transform(createTabId),
 });
 
 /**
  * Proactive suggestion schemas (Story 1.14)
+ * Uses .transform() to return branded PatternId for type safety
  */
 export const SuggestContinuationSchema = z.object({
-  patternId: z.string().min(1, { message: "Pattern ID is required" }),
+  patternId: z
+    .string()
+    .min(1, { message: "Pattern ID is required" })
+    .transform(createPatternId),
   intentSummary: z.string(),
   estimatedItems: z.number().int().positive(),
   matchCount: z.number().int().min(2),
 });
 
 export const StartContinuationSchema = z.object({
-  patternId: z.string().min(1, { message: "Pattern ID is required" }),
+  patternId: z
+    .string()
+    .min(1, { message: "Pattern ID is required" })
+    .transform(createPatternId),
   itemCount: z.number().int().positive().max(100, {
     message: "Item count must be at most 100",
   }),
@@ -126,6 +154,28 @@ export const StartContinuationSchema = z.object({
 
 export const CancelExecutionSchema = z.object({
   executionId: z.string().min(1, { message: "Execution ID is required" }),
+});
+
+/**
+ * Dismiss pattern input schema
+ * Uses .transform() to return branded PatternId for type safety
+ */
+export const DismissPatternSchema = z.object({
+  patternId: z
+    .string()
+    .min(1, { message: "Pattern ID is required" })
+    .transform(createPatternId),
+});
+
+/**
+ * Start workflow refinement input schema
+ * Uses .transform() to return branded AutomationId for type safety
+ */
+export const StartRefinementSchema = z.object({
+  automationId: z
+    .string()
+    .uuid({ message: "Invalid automation ID format" })
+    .transform(createAutomationId),
 });
 
 /**

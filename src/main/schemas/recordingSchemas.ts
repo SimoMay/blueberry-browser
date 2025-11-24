@@ -1,20 +1,15 @@
 import { z } from "zod";
-import type { TabId } from "../types/brandedTypes";
+import { createTabId } from "../types/brandedTypes";
 
 /**
  * Schema for starting a recording
+ * Uses .transform() to return branded TabId for type safety
  */
 export const StartRecordingSchema = z.object({
-  tabId: z.string(),
+  tabId: z.string().transform(createTabId),
 });
 
-// Override Zod inference to use branded TabId
-export type StartRecordingInput = Omit<
-  z.infer<typeof StartRecordingSchema>,
-  "tabId"
-> & {
-  tabId: TabId;
-};
+export type StartRecordingInput = z.infer<typeof StartRecordingSchema>;
 
 /**
  * Schema for saving a recording

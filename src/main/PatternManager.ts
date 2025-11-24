@@ -190,7 +190,7 @@ export class PatternManager {
   private lastLLMCallTimestamps: Map<string, number> = new Map(); // Story 1.15 - Rate limiting for LLM calls
   private currentlyAnalyzing: Set<string> = new Set(); // Story 1.18 - Track pattern types currently being analyzed to prevent duplicates
   private currentExecutionEngine: { cancel: () => void } | null = null; // Story 1.16 - Track current execution for cancellation
-  private currentExecutionId: string | null = null; // Story 1.16 - Track automation ID for immediate cancel feedback
+  private currentExecutionId: AutomationId | null = null; // Story 1.16 - Track automation ID for immediate cancel feedback
 
   private constructor() {
     // Private constructor for singleton pattern
@@ -431,8 +431,8 @@ export class PatternManager {
    * Dismiss a pattern to prevent future notifications
    */
   public async dismissPattern(
-    patternId: string,
-  ): Promise<IPCResponse<{ patternId: string }>> {
+    patternId: PatternId,
+  ): Promise<IPCResponse<{ patternId: PatternId }>> {
     try {
       if (!this.db) {
         throw new Error("PatternManager not initialized");
@@ -477,8 +477,8 @@ export class PatternManager {
   public async getAutomations(): Promise<
     IPCResponse<
       Array<{
-        id: string;
-        patternId: string;
+        id: AutomationId;
+        patternId: PatternId;
         name: string;
         description?: string;
         patternData: NavigationPattern | FormPattern;
@@ -559,7 +559,7 @@ export class PatternManager {
    * Edit automation (update name and description)
    */
   public async editAutomation(data: {
-    automationId: string;
+    automationId: AutomationId;
     name: string;
     description?: string;
   }): Promise<IPCResponse<void>> {
@@ -607,7 +607,7 @@ export class PatternManager {
    * Delete automation
    */
   public async deleteAutomation(
-    automationId: string,
+    automationId: AutomationId,
   ): Promise<IPCResponse<void>> {
     try {
       if (!this.db) {
@@ -647,9 +647,9 @@ export class PatternManager {
    * Get a single automation by ID
    * Story 1.17: Used by WorkflowRefiner to load automation data
    */
-  public async getAutomation(automationId: string): Promise<{
-    id: string;
-    pattern_id: string;
+  public async getAutomation(automationId: AutomationId): Promise<{
+    id: AutomationId;
+    pattern_id: PatternId;
     name: string;
     description?: string;
     pattern_data: NavigationPattern | FormPattern | CopyPastePattern;
@@ -729,8 +729,8 @@ export class PatternManager {
       }
 
       return {
-        id: row.id,
-        pattern_id: row.pattern_id,
+        id: createAutomationId(row.id),
+        pattern_id: createPatternId(row.pattern_id),
         name: row.name,
         description: row.description,
         pattern_data,
@@ -752,7 +752,7 @@ export class PatternManager {
    * Story 1.17: Save refined workflow after conversational customization
    */
   public async updateAutomationWorkflow(
-    automationId: string,
+    automationId: AutomationId,
     customizations: Record<string, unknown>,
   ): Promise<void> {
     try {
@@ -820,7 +820,7 @@ export class PatternManager {
    * Returns execution result with steps completed and duration
    */
   public async executeAutomation(
-    automationId: string,
+    automationId: AutomationId,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     _window: any, // Window instance passed from EventManager (circular dependency prevents proper typing)
     onProgress?: (
@@ -1079,7 +1079,7 @@ export class PatternManager {
    * Cancel currently executing automation (Story 1.16)
    * Returns automation ID if cancelled, null if no execution in progress
    */
-  public cancelExecution(): string | null {
+  public cancelExecution(): AutomationId | null {
     if (this.currentExecutionEngine && this.currentExecutionId) {
       this.currentExecutionEngine.cancel();
       log.info("[PatternManager] Automation execution cancelled");
@@ -1361,7 +1361,9 @@ export class PatternManager {
         if (newConfidence > 70 && this.intentSummarizer) {
           try {
             const summaryResponse =
-              await this.intentSummarizer.summarizePattern(matchingPattern.id);
+              await this.intentSummarizer.summarizePattern(
+                createPatternId(matchingPattern.id),
+              );
 
             if (
               summaryResponse.success &&
@@ -1951,7 +1953,7 @@ export class PatternManager {
    */
   public async saveManualRecording(
     data: SaveRecordingInput,
-  ): Promise<IPCResponse<{ automationId: string }>> {
+  ): Promise<IPCResponse<{ automationId: AutomationId }>> {
     try {
       if (!this.db) {
         throw new Error("PatternManager not initialized");
@@ -2002,8 +2004,8 @@ export class PatternManager {
       }
 
       // Create pattern ID and automation ID
-      const patternId = `${patternType}-manual-${uuidv4()}`;
-      const automationId = uuidv4();
+      const patternId = createPatternId(`${patternType}-manual-${uuidv4()}`);
+      const automationId = createAutomationId(uuidv4());
 
       // Create pattern in database (won't trigger notifications since confidence = 100%)
       const now = Date.now();

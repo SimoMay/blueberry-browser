@@ -25,24 +25,11 @@ import {
 import {
   StartContinuationSchema,
   CancelExecutionSchema,
+  DismissPatternSchema,
+  StartRefinementSchema,
 } from "./schemas/patternSchemas";
-import {
-  createTabId,
-  createPatternId,
-  createAutomationId,
-  createNotificationId,
-} from "./types/brandedTypes";
-import type {
-  SaveAutomationInput,
-  ExecuteAutomationInput,
-  EditAutomationInput,
-  DeleteAutomationInput,
-  CopyEventInput,
-  PasteEventInput,
-  StartContinuationInput,
-} from "./schemas/patternSchemas";
-import type { DismissNotificationInput } from "./schemas/notificationSchemas";
-import type { StartRecordingInput } from "./schemas/recordingSchemas";
+// Branded type creators no longer needed - Zod .transform() handles this
+import type { CopyEventInput, PasteEventInput } from "./schemas/patternSchemas";
 import { MonitorManager } from "./MonitorManager";
 import {
   MonitorCreateSchema,
@@ -295,12 +282,10 @@ export class EventManager {
     // Dismiss a notification
     ipcMain.handle("notification:dismiss", async (_, input) => {
       try {
+        // Zod .transform() returns branded NotificationId directly
         const validInput = DismissNotificationSchema.parse(input);
-        const typedInput: DismissNotificationInput = {
-          notificationId: createNotificationId(validInput.notificationId),
-        };
         await notificationManager.dismissNotification(
-          typedInput.notificationId,
+          validInput.notificationId,
         );
         return { success: true };
       } catch (error) {
@@ -471,16 +456,11 @@ export class EventManager {
         }
 
         // Zod validation
+        // Zod .transform() returns branded PatternId directly
         const validated = SaveAutomationSchema.parse(data);
 
-        // Convert to branded types after validation
-        const input: SaveAutomationInput = {
-          ...validated,
-          pattern_id: createPatternId(validated.pattern_id),
-        };
-
-        // Call PatternManager
-        return await patternManager.saveAutomation(input);
+        // Call PatternManager (validated already has branded types)
+        return await patternManager.saveAutomation(validated);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
@@ -502,34 +482,34 @@ export class EventManager {
     });
 
     // Dismiss pattern
-    ipcMain.handle(
-      "pattern:dismiss",
-      async (_, data: { patternId: string }) => {
-        try {
-          // Rate limiting
-          if (!this.checkRateLimit("pattern:dismiss", 50)) {
-            return {
-              success: false,
-              error: {
-                code: "RATE_LIMIT",
-                message: "Too many requests",
-              },
-            };
-          }
-
-          // Call PatternManager
-          return await patternManager.dismissPattern(data.patternId);
-        } catch (error) {
+    ipcMain.handle("pattern:dismiss", async (_, data) => {
+      try {
+        // Rate limiting
+        if (!this.checkRateLimit("pattern:dismiss", 50)) {
           return {
             success: false,
             error: {
-              code: "UNKNOWN_ERROR",
-              message: error instanceof Error ? error.message : "Unknown error",
+              code: "RATE_LIMIT",
+              message: "Too many requests",
             },
           };
         }
-      },
-    );
+
+        // Zod validation (returns branded PatternId via .transform())
+        const validated = DismissPatternSchema.parse(data);
+
+        // Call PatternManager
+        return await patternManager.dismissPattern(validated.patternId);
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            code: "UNKNOWN_ERROR",
+            message: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+    });
 
     // Execute automation
     ipcMain.handle("pattern:execute-automation", async (_, automationId) => {
@@ -552,10 +532,7 @@ export class EventManager {
           automation_id: automationId,
         });
 
-        // Convert to branded types
-        const input: ExecuteAutomationInput = {
-          automation_id: createAutomationId(validated.automation_id),
-        };
+        // Zod .transform() already returns branded AutomationId
 
         // TODO: Replace with toast notifications instead of persistent notifications
         // System notifications don't fit the notification panel interaction model
@@ -588,7 +565,7 @@ export class EventManager {
           screenshotBase64?: string,
         ): void => {
           this.mainWindow.sidebar.view.webContents.send("automation:progress", {
-            automationId: input.automation_id, // Send branded ID (will be serialized as string over IPC)
+            automationId: validated.automation_id, // Send branded ID (will be serialized as string over IPC)
             currentStep: step,
             totalSteps: total,
             stepDescription: description,
@@ -598,7 +575,7 @@ export class EventManager {
 
         // Call PatternManager with Window instance and progress callback
         const result = await patternManager.executeAutomation(
-          input.automation_id,
+          validated.automation_id,
           this.mainWindow,
           onProgress,
         );
@@ -699,17 +676,11 @@ export class EventManager {
           };
         }
 
-        // Zod validation
+        // Zod validation (returns branded AutomationId via .transform())
         const validated = EditAutomationSchema.parse(data);
 
-        // Convert to branded types
-        const input: EditAutomationInput = {
-          ...validated,
-          automationId: createAutomationId(validated.automationId),
-        };
-
-        // Call PatternManager
-        return await patternManager.editAutomation(input);
+        // Call PatternManager (validated already has branded types)
+        return await patternManager.editAutomation(validated);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
@@ -744,16 +715,11 @@ export class EventManager {
           };
         }
 
-        // Zod validation
+        // Zod validation (returns branded AutomationId via .transform())
         const validated = DeleteAutomationSchema.parse({ automationId });
 
-        // Convert to branded types
-        const input: DeleteAutomationInput = {
-          automationId: createAutomationId(validated.automationId),
-        };
-
-        // Call PatternManager
-        return await patternManager.deleteAutomation(input.automationId);
+        // Call PatternManager (validated.automationId already branded)
+        return await patternManager.deleteAutomation(validated.automationId);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
@@ -815,27 +781,21 @@ export class EventManager {
           };
         }
 
-        // Zod validation
+        // Zod validation (returns branded TabId via .transform())
         let typedInput: {
           copyEvent?: CopyEventInput;
           pasteEvent?: PasteEventInput;
         };
 
         if (data.copyEvent) {
-          const validated = CopyEventSchema.parse(data.copyEvent);
+          // Zod already returns branded TabId
           typedInput = {
-            copyEvent: {
-              ...validated,
-              tabId: createTabId(validated.tabId),
-            },
+            copyEvent: CopyEventSchema.parse(data.copyEvent),
           };
         } else if (data.pasteEvent) {
-          const validated = PasteEventSchema.parse(data.pasteEvent);
+          // Zod already returns branded TabId
           typedInput = {
-            pasteEvent: {
-              ...validated,
-              tabId: createTabId(validated.tabId),
-            },
+            pasteEvent: PasteEventSchema.parse(data.pasteEvent),
           };
         } else {
           return {
@@ -883,14 +843,8 @@ export class EventManager {
           };
         }
 
-        // Zod validation
+        // Zod validation (returns branded PatternId via .transform())
         const validated = StartContinuationSchema.parse(data);
-
-        // Convert to branded types
-        const input: StartContinuationInput = {
-          ...validated,
-          patternId: createPatternId(validated.patternId),
-        };
 
         // Get pattern data from PatternManager
         const patternResult = await patternManager.getAllPatterns();
@@ -905,7 +859,7 @@ export class EventManager {
         }
 
         const pattern = patternResult.data.find(
-          (p) => p.id === input.patternId,
+          (p) => p.id === validated.patternId,
         );
         if (!pattern) {
           return {
@@ -1028,16 +982,11 @@ export class EventManager {
           };
         }
 
-        // Zod validation
+        // Zod validation (returns branded TabId via .transform())
         const validated = StartRecordingSchema.parse(data);
 
-        // Convert to branded types
-        const input: StartRecordingInput = {
-          tabId: createTabId(validated.tabId),
-        };
-
-        // Start recording
-        return recordingManager.startRecording(input.tabId);
+        // Start recording (validated.tabId already branded)
+        return recordingManager.startRecording(validated.tabId);
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
@@ -1176,7 +1125,7 @@ export class EventManager {
     };
 
     // Start refinement conversation
-    ipcMain.handle("workflow:start-refinement", async (_, automationId) => {
+    ipcMain.handle("workflow:start-refinement", async (_, data) => {
       try {
         // Rate limiting
         if (!this.checkRateLimit("workflow:start-refinement", 10)) {
@@ -1189,19 +1138,13 @@ export class EventManager {
           };
         }
 
-        // Validation
-        if (!automationId || typeof automationId !== "string") {
-          return {
-            success: false,
-            error: {
-              code: "VALIDATION_ERROR",
-              message: "Invalid automation ID",
-            },
-          };
-        }
+        // Zod validation (returns branded AutomationId via .transform())
+        const validated = StartRefinementSchema.parse({ automationId: data });
 
         const refiner = getWorkflowRefiner();
-        const result = await refiner.startRefinementConversation(automationId);
+        const result = await refiner.startRefinementConversation(
+          validated.automationId,
+        );
 
         return {
           success: true,

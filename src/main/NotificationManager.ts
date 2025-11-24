@@ -2,6 +2,10 @@ import log from "electron-log";
 import { v4 as uuidv4 } from "uuid";
 import { DatabaseManager } from "./database/Database";
 import Database from "better-sqlite3";
+import {
+  type NotificationId,
+  createNotificationId,
+} from "./types/brandedTypes";
 
 /**
  * Notification type enum
@@ -17,7 +21,7 @@ export type NotificationSeverity = "info" | "warning" | "error";
  * Notification interface
  */
 export interface Notification {
-  id: string;
+  id: NotificationId;
   type: NotificationType;
   severity: NotificationSeverity;
   title: string;
@@ -117,7 +121,7 @@ export class NotificationManager {
       }
 
       const notification: Notification = {
-        id: uuidv4(),
+        id: createNotificationId(uuidv4()),
         type: input.type,
         severity: input.severity,
         title: input.title,
@@ -177,15 +181,39 @@ export class NotificationManager {
           WHERE type = ?
           ORDER BY created_at DESC
         `);
-        const rows = stmt.all(type) as Notification[];
-        return rows;
+        const rows = stmt.all(type) as Array<{
+          id: string;
+          type: NotificationType;
+          severity: NotificationSeverity;
+          title: string;
+          message: string;
+          data?: string;
+          created_at: number;
+          dismissed_at: number | null;
+        }>;
+        return rows.map((row) => ({
+          ...row,
+          id: createNotificationId(row.id),
+        }));
       } else {
         stmt = this.db.prepare(`
           SELECT * FROM notifications
           ORDER BY created_at DESC
         `);
-        const rows = stmt.all() as Notification[];
-        return rows;
+        const rows = stmt.all() as Array<{
+          id: string;
+          type: NotificationType;
+          severity: NotificationSeverity;
+          title: string;
+          message: string;
+          data?: string;
+          created_at: number;
+          dismissed_at: number | null;
+        }>;
+        return rows.map((row) => ({
+          ...row,
+          id: createNotificationId(row.id),
+        }));
       }
     } catch (error) {
       log.error("[NotificationManager] Get notifications failed:", error);
@@ -224,7 +252,9 @@ export class NotificationManager {
   /**
    * Dismiss a notification by ID
    */
-  public async dismissNotification(notificationId: string): Promise<void> {
+  public async dismissNotification(
+    notificationId: NotificationId,
+  ): Promise<void> {
     try {
       if (!this.db) {
         throw new Error("NotificationManager not initialized");

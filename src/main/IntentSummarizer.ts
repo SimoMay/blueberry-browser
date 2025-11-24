@@ -8,6 +8,7 @@ import type {
 } from "./PatternManager";
 import { z } from "zod";
 import { LLMProviderConfig } from "./LLMProviderConfig";
+import { type PatternId } from "./types/brandedTypes";
 
 /**
  * Zod schema for dual intent summaries (AC-2: Use generateObject() with Zod schema)
@@ -82,7 +83,7 @@ export class IntentSummarizer {
    * AC-2, AC-3: Use generateObject() with Zod schema, SDK handles retries
    * Generates both short (notification) and detailed (chat) summaries
    */
-  public async summarizePattern(patternId: string): Promise<{
+  public async summarizePattern(patternId: PatternId): Promise<{
     success: boolean;
     short?: string;
     detailed?: string;
@@ -150,7 +151,7 @@ export class IntentSummarizer {
    * Story 1.12 - AC 3: Cached summaries reused for 1 hour
    */
   private getCachedSummary(
-    patternId: string,
+    patternId: PatternId,
   ): { short: string; detailed: string } | null {
     try {
       const stmt = this.db.prepare(`
@@ -198,7 +199,7 @@ export class IntentSummarizer {
   /**
    * Get pattern data from database
    */
-  private getPatternData(patternId: string): PatternData | null {
+  private getPatternData(patternId: PatternId): PatternData | null {
     try {
       const stmt = this.db.prepare(`
         SELECT type, pattern_data
@@ -487,7 +488,7 @@ DETAILED: [your 40-50 word description]`;
    * Story 1.12 - AC 3: Store summaries with timestamp for 1-hour invalidation
    */
   private cacheSummary(
-    patternId: string,
+    patternId: PatternId,
     shortSummary: string,
     detailedSummary: string,
   ): void {

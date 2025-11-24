@@ -81,6 +81,7 @@ It can also be a good way for us to give feedback if things are heading in the r
 Blueberry Browser now includes an intelligent automation system that learns from your browsing behavior and offers to automate repetitive workflows. Instead of relying on simple heuristics or rule-based pattern matching, the system uses Large Language Models (LLMs) to understand user intent and execute automations that adapt to changing page layouts.
 
 **Key Capabilities:**
+
 - **Automatic Pattern Detection**: Tracks navigation sequences, form submissions, and copy/paste workflows across tabs
 - **AI-Driven Analysis**: Uses LLMs to determine if actions form meaningful, automation-worthy patterns
 - **Conversational Workflow Refinement**: Multi-turn AI conversations to customize automations before saving
@@ -91,9 +92,9 @@ Blueberry Browser now includes an intelligent automation system that learns from
 
 #### 1. LLM-First Design Philosophy
 
-**Pattern Recognition**: After tracking similar actions (e.g., three navigation sequences), the system asks an LLM: *"Is this a meaningful pattern worth automating?"* The LLM receives rich context including page titles, element text, and tab switches, then returns a structured decision with confidence level and intent summary.
+**Pattern Recognition**: After tracking similar actions (e.g., three navigation sequences), the system asks an LLM: _"Is this a meaningful pattern worth automating?"_ The LLM receives rich context including page titles, element text, and tab switches, then returns a structured decision with confidence level and intent summary.
 
-**Workflow Execution**: Each automation step is decided in real-time by an LLM analyzing the current page state. The LLM receives a screenshot and list of interactive elements, then decides: *"What should I do next?"* This allows automations to adapt when websites change their layout or content.
+**Workflow Execution**: Each automation step is decided in real-time by an LLM analyzing the current page state. The LLM receives a screenshot and list of interactive elements, then decides: _"What should I do next?"_ This allows automations to adapt when websites change their layout or content.
 
 **Conversational Refinement**: When users approve a pattern, an AI conversation guides them through customization options. The LLM adapts its questions based on the workflow type and conversation history, rather than forcing users through rigid forms.
 
@@ -184,20 +185,24 @@ The implementation spans ~22,000 lines across 80 files. Here's how it's organize
 #### Main Process Services (`src/main/`)
 
 **Core Pattern Management:**
+
 - `PatternManager.ts` (2,532 lines) - Central coordinator for pattern tracking, database operations, and automation management
 - `LLMPatternAnalyzer.ts` (297 lines) - AI-powered pattern detection using structured LLM output
 - `IntentSummarizer.ts` (510 lines) - Generates dual summaries (short for notifications, detailed for chat) with caching
 
 **Automation Execution:**
+
 - `LLMExecutionEngine.ts` (1,136 lines) - LLM-guided workflow execution with page-by-page action decisions
 - `WorkflowRefiner.ts` (527 lines) - Multi-turn AI conversation for workflow customization
 - `RecordingManager.ts` (487 lines) - Manual recording session management with timeout/action limits
 
 **Shared Services:**
+
 - `NotificationManager.ts` (388 lines) - Notification lifecycle management (create, update, dismiss)
 - `LLMProviderConfig.ts` (147 lines) - Centralized configuration for OpenAI/Anthropic/Gemini models
 
 **Infrastructure Extensions:**
+
 - `Window.ts` - Added navigation event capture and recording cleanup hooks
 - `Tab.ts` - Injected form/copy-paste tracking scripts and tab crash detection
 - `EventManager.ts` - Extended with 30+ new IPC event handlers for pattern features
@@ -212,22 +217,26 @@ The implementation spans ~22,000 lines across 80 files. Here's how it's organize
 #### UI Components (`src/renderer/sidebar/src/components/`)
 
 **Automation Management:**
+
 - `AutomationLibrary.tsx` (325 lines) - Grid view of saved automations with search/filter
 - `AutomationItem.tsx` (521 lines) - Individual automation card with execute/edit/delete actions and progress visualization
 - `WorkflowDisplay.tsx` (213 lines) - Visual representation of workflow steps
 - `WorkflowRefinementDialog.tsx` (405 lines) - Full-screen modal for AI-driven workflow customization
 
 **Recording Interface:**
+
 - `RecordingPreviewModal.tsx` (326 lines) - Preview captured actions before saving
 - `RecordingActiveModal.tsx` (51 lines) - Persistent indicator during active recording
 - `ZeroActionModal.tsx` (50 lines) - Prevents saving empty recordings
 
 **Notifications:**
+
 - `NotificationPanel.tsx` (358 lines) - Sliding panel with notification history and badge count
 - `AIPatternMessage.tsx` (302 lines) - Inline chat message for pattern detection
 - `PatternActionMessage.tsx` (276 lines) - Action buttons for approving/dismissing patterns
 
 **Common Components (`src/renderer/common/components/`):**
+
 - `Modal.tsx` (121 lines) - Reusable modal with dark mode support
 - `Panel.tsx` (67 lines) - Sliding panel component
 - `Badge.tsx` (60 lines) - Notification badge counter
@@ -243,22 +252,26 @@ The implementation spans ~22,000 lines across 80 files. Here's how it's organize
 #### Database Schema
 
 **patterns** table:
+
 - Stores detected patterns with type (navigation/form/copy-paste), confidence, occurrence count
 - `pattern_data` JSON column contains pattern-specific details (URLs, form fields, etc.)
 - `intent_summary` and `intent_summary_detailed` for UI display
 - `dismissed` flag for user-rejected patterns
 
 **automations** table:
+
 - Saved automations with names, descriptions, and AI-decided workflow format
 - Links to source pattern via `pattern_id`
 - Execution statistics (last run, success count)
 
 **notifications** table:
+
 - Pattern detection notifications with titles and metadata
 - `dismissed_at` timestamp for notification history
 - Links to patterns via `data` JSON field
 
 **monitors** table:
+
 - Foundation for future page monitoring features (currently unused)
 
 #### IPC Communication
@@ -266,15 +279,18 @@ The implementation spans ~22,000 lines across 80 files. Here's how it's organize
 30+ new secure IPC channels organized by feature:
 
 **Pattern Management (`pattern:*`):**
+
 - `pattern:track-navigation`, `pattern:track-form`, `pattern:track-copy-paste`, `pattern:track-tab-switch`
 - `pattern:get-all`, `pattern:save-automation`, `pattern:delete-automation`
 - `pattern:execute`, `pattern:cancel-execution`, `pattern:edit-automation`
 
 **Recording (`recording:*`):**
+
 - `recording:start`, `recording:stop`, `recording:cancel`
 - `recording:get-status`, `recording:set-paused`
 
 **Notifications (`notification:*`):**
+
 - `notification:get-all`, `notification:dismiss`, `notification:mark-all-read`
 - `notification:new` (main → renderer event)
 
@@ -297,11 +313,13 @@ All channels use Zod validation for type-safe request/response payloads.
 ### Development & Testing
 
 **Code Quality:**
+
 - 0 TypeScript errors (`pnpm typecheck`)
 - 0 ESLint errors (`pnpm lint`)
 - All `console.log` replaced with `electron-log` for production debugging
 
 **Performance Benchmarks:**
+
 - Pattern detection: <30 seconds (including LLM call)
 - Database operations: <50ms per write
 - LLM API cost: <$0.01 per pattern detection + execution
@@ -309,6 +327,7 @@ All channels use Zod validation for type-safe request/response payloads.
 ### Future Extensions
 
 The codebase includes infrastructure for planned features:
+
 - **Page Monitoring** (`MonitorManager.ts`): Scheduled HTML snapshots and change detection (table exists, implementation pending)
 - **Function Calling for Tab Control**: Allow AI chat to control tabs via function calling
 - **Proactive Pattern Suggestions**: Continue detected patterns before user completes them
