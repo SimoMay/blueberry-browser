@@ -3,7 +3,6 @@ import { v4 as uuidv4 } from "uuid";
 import { DatabaseManager } from "./database/Database";
 import Database from "better-sqlite3";
 import {
-  PatternTrackInput,
   PatternGetAllInput,
   SaveAutomationInput,
 } from "./schemas/patternSchemas";
@@ -241,47 +240,6 @@ export class PatternManager {
       throw {
         code: "PATTERN_INIT_ERROR",
         message: error instanceof Error ? error.message : "Unknown error",
-      };
-    }
-  }
-
-  /**
-   * Track a new pattern
-   * Database integration will be implemented in Story 1.6
-   */
-  public async trackPattern(
-    data: PatternTrackInput,
-  ): Promise<IPCResponse<Pattern>> {
-    try {
-      if (!this.db) {
-        throw new Error("PatternManager not initialized");
-      }
-
-      log.info("[PatternManager] Track pattern:", data.type);
-
-      // Placeholder: Database integration will happen in Story 1.6
-      const pattern: Pattern = {
-        id: createPatternId(uuidv4()),
-        type: data.type,
-        pattern_data: data.pattern_data,
-        confidence: data.confidence,
-        created_at: Date.now(),
-      };
-
-      log.info("[PatternManager] Pattern tracked successfully:", pattern.id);
-
-      return {
-        success: true,
-        data: pattern,
-      };
-    } catch (error) {
-      log.error("[PatternManager] Track pattern error:", error);
-      return {
-        success: false,
-        error: {
-          code: "TRACK_ERROR",
-          message: error instanceof Error ? error.message : "Unknown error",
-        },
       };
     }
   }

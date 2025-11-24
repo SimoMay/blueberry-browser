@@ -30,18 +30,6 @@ export const LLMAnalysisResultSchema = z.object({
 });
 
 /**
- * Pattern track input schema
- */
-export const PatternTrackSchema = z.object({
-  type: PatternTypeSchema,
-  pattern_data: z.string().min(1, { message: "Pattern data is required" }),
-  confidence: z
-    .number()
-    .min(0, { message: "Confidence must be at least 0" })
-    .max(1, { message: "Confidence must be at most 1" }),
-});
-
-/**
  * Pattern get all input schema (optional filters)
  */
 export const PatternGetAllSchema = z
@@ -201,7 +189,6 @@ export const LLMExecutionStepSchema = z.object({
 /**
  * Type exports for TypeScript (with branded types for type safety)
  */
-export type PatternTrackInput = z.infer<typeof PatternTrackSchema>;
 export type PatternGetAllInput = z.infer<typeof PatternGetAllSchema>;
 
 // Override Zod inference to use branded types for IDs

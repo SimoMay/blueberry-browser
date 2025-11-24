@@ -123,12 +123,6 @@ const sidebarAPI = {
 
   // Pattern detection functionality
   pattern: {
-    track: (data: {
-      type: "navigation" | "form" | "copy-paste";
-      pattern_data: string;
-      confidence: number;
-    }) => electronAPI.ipcRenderer.invoke("pattern:track", data),
-
     getAll: (filters?: { type?: "navigation" | "form" | "copy-paste" }) =>
       electronAPI.ipcRenderer.invoke("pattern:get-all", filters),
 

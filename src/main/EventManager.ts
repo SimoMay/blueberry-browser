@@ -10,7 +10,6 @@ import { PatternManager, type Pattern } from "./PatternManager";
 import type { AutomationId, MonitorId } from "./types/brandedTypes";
 import { WorkflowRefiner } from "./WorkflowRefiner";
 import {
-  PatternTrackSchema,
   PatternGetAllSchema,
   SaveAutomationSchema,
   ExecuteAutomationSchema,
@@ -361,45 +360,6 @@ export class EventManager {
 
   private handlePatternEvents(): void {
     const patternManager = PatternManager.getInstance();
-
-    // Track pattern
-    ipcMain.handle("pattern:track", async (_, data) => {
-      try {
-        // Rate limiting
-        if (!this.checkRateLimit("pattern:track", 50)) {
-          return {
-            success: false,
-            error: {
-              code: "RATE_LIMIT",
-              message: "Too many requests",
-            },
-          };
-        }
-
-        // Zod validation
-        const validated = PatternTrackSchema.parse(data);
-
-        // Call PatternManager
-        return await patternManager.trackPattern(validated);
-      } catch (error) {
-        if (error instanceof z.ZodError) {
-          return {
-            success: false,
-            error: {
-              code: "VALIDATION_ERROR",
-              message: error.issues[0].message,
-            },
-          };
-        }
-        return {
-          success: false,
-          error: {
-            code: "UNKNOWN_ERROR",
-            message: error instanceof Error ? error.message : "Unknown error",
-          },
-        };
-      }
-    });
 
     // Get all patterns
     ipcMain.handle("pattern:get-all", async (_, filters) => {
