@@ -7,12 +7,13 @@ import {
   MonitorFrequency,
   MonitorStatus,
 } from "./schemas/monitorSchemas";
+import { type MonitorId, createMonitorId } from "./types/brandedTypes";
 
 /**
  * Monitor interface
  */
 export interface Monitor {
-  id: string;
+  id: MonitorId;
   url: string;
   goal?: string;
   frequency: MonitorFrequency;
@@ -112,7 +113,9 @@ export class MonitorManager {
       }
 
       // Generate unique ID
-      const id = `monitor-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const id = createMonitorId(
+        `monitor-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      );
       const now = Date.now();
 
       // Insert monitor into database
@@ -182,7 +185,22 @@ export class MonitorManager {
 
       // Retrieve updated monitor
       const selectStmt = this.db.prepare("SELECT * FROM monitors WHERE id = ?");
-      const monitor = selectStmt.get(id) as Monitor;
+      const row = selectStmt.get(id) as {
+        id: string;
+        url: string;
+        goal?: string;
+        frequency: string;
+        status: string;
+        last_check?: number;
+        created_at: number;
+        updated_at: number;
+      };
+      const monitor: Monitor = {
+        ...row,
+        id: createMonitorId(row.id),
+        frequency: row.frequency as MonitorFrequency,
+        status: row.status as MonitorStatus,
+      };
 
       log.info("[MonitorManager] Monitor paused successfully:", id);
 
@@ -233,7 +251,22 @@ export class MonitorManager {
 
       // Retrieve updated monitor
       const selectStmt = this.db.prepare("SELECT * FROM monitors WHERE id = ?");
-      const monitor = selectStmt.get(id) as Monitor;
+      const row = selectStmt.get(id) as {
+        id: string;
+        url: string;
+        goal?: string;
+        frequency: string;
+        status: string;
+        last_check?: number;
+        created_at: number;
+        updated_at: number;
+      };
+      const monitor: Monitor = {
+        ...row,
+        id: createMonitorId(row.id),
+        frequency: row.frequency as MonitorFrequency,
+        status: row.status as MonitorStatus,
+      };
 
       log.info("[MonitorManager] Monitor resumed successfully:", id);
 
@@ -325,7 +358,24 @@ export class MonitorManager {
       query += " ORDER BY created_at DESC";
 
       const stmt = this.db.prepare(query);
-      const monitors = stmt.all(...params) as Monitor[];
+      const rows = stmt.all(...params) as Array<{
+        id: string;
+        url: string;
+        goal?: string;
+        frequency: string;
+        status: string;
+        last_check?: number;
+        created_at: number;
+        updated_at: number;
+      }>;
+
+      // Convert DB rows to Monitor interface with branded MonitorId
+      const monitors: Monitor[] = rows.map((row) => ({
+        ...row,
+        id: createMonitorId(row.id),
+        frequency: row.frequency as MonitorFrequency,
+        status: row.status as MonitorStatus,
+      }));
 
       log.info("[MonitorManager] Retrieved monitors, count:", monitors.length);
 

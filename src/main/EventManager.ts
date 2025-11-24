@@ -1,12 +1,13 @@
 import { ipcMain, WebContents } from "electron";
 import log from "electron-log";
 import type { Window } from "./Window";
-import { NotificationManager } from "./NotificationManager";
+import { NotificationManager, type Notification } from "./NotificationManager";
 import {
   DismissNotificationSchema,
   GetNotificationsSchema,
 } from "./schemas/notificationSchemas";
-import { PatternManager } from "./PatternManager";
+import { PatternManager, type Pattern } from "./PatternManager";
+import type { AutomationId, MonitorId } from "./types/brandedTypes";
 import { WorkflowRefiner } from "./WorkflowRefiner";
 import {
   PatternTrackSchema,
@@ -30,7 +31,7 @@ import {
 } from "./schemas/patternSchemas";
 // Branded type creators no longer needed - Zod .transform() handles this
 import type { CopyEventInput, PasteEventInput } from "./schemas/patternSchemas";
-import { MonitorManager } from "./MonitorManager";
+import { MonitorManager, type Monitor } from "./MonitorManager";
 import {
   MonitorCreateSchema,
   MonitorUpdateSchema,
@@ -1590,15 +1591,7 @@ export class EventManager {
   }
 
   // Broadcast notification to sidebar
-  public broadcastNotification(notification: {
-    id: string;
-    type: string;
-    severity: string;
-    title: string;
-    message: string;
-    created_at: number;
-    data?: unknown;
-  }): void {
+  public broadcastNotification(notification: Notification): void {
     this.mainWindow.sidebar.view.webContents.send(
       "notification:show",
       notification,
@@ -1606,13 +1599,7 @@ export class EventManager {
   }
 
   // Broadcast pattern detected event to sidebar
-  public broadcastPatternDetected(pattern: {
-    id: string;
-    type: string;
-    pattern_data: string;
-    confidence: number;
-    detected_at: number;
-  }): void {
+  public broadcastPatternDetected(pattern: Pattern): void {
     // Security check: validate WebContents ID before sending
     if (this.mainWindow.sidebar.view.webContents) {
       this.mainWindow.sidebar.view.webContents.send(
@@ -1624,7 +1611,7 @@ export class EventManager {
 
   // Broadcast automation completed event to sidebar
   public broadcastAutomationCompleted(result: {
-    automation_id: string;
+    automation_id: AutomationId;
     success: boolean;
     result: unknown;
   }): void {
@@ -1638,12 +1625,7 @@ export class EventManager {
   }
 
   // Broadcast monitor status changed event to sidebar
-  public broadcastMonitorStatusChanged(monitor: {
-    id: string;
-    url: string;
-    status: string;
-    updated_at: number;
-  }): void {
+  public broadcastMonitorStatusChanged(monitor: Monitor): void {
     // Security check: validate WebContents ID before sending
     if (this.mainWindow.sidebar.view.webContents) {
       this.mainWindow.sidebar.view.webContents.send(
@@ -1655,7 +1637,7 @@ export class EventManager {
 
   // Broadcast monitor alert event to sidebar
   public broadcastMonitorAlert(alert: {
-    monitor_id: string;
+    monitor_id: MonitorId;
     url: string;
     change_summary: string;
     severity: string;
