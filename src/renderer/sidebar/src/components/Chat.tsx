@@ -438,22 +438,6 @@ export const Chat: React.FC<ChatProps> = ({
   // Track which pattern notifications we've already created messages for
   const processedPatternNotifications = useRef<Set<string>>(new Set());
 
-  // Story 1.14: Proactive Automation Suggestion State
-  const [proactiveSuggestion, setProactiveSuggestion] = useState<{
-    patternId: string;
-    intentSummary: string;
-    estimatedItems: number;
-    matchCount: number;
-  } | null>(null);
-
-  // Debug: Log state changes
-  useEffect(() => {
-    console.log(
-      "[Chat] proactiveSuggestion state updated:",
-      proactiveSuggestion,
-    );
-  }, [proactiveSuggestion]);
-
   // TODO: Story 1.14: Execution Progress State (temporarily unused)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_executionProgress, _setExecutionProgress] = useState<{
@@ -538,27 +522,6 @@ export const Chat: React.FC<ChatProps> = ({
       onPatternProcessed();
     }
   }, [pendingPatternData, onPatternProcessed]);
-
-  // Story 1.14: Listen for proactive automation suggestions
-  useEffect(() => {
-    const handleSuggestContinuation = (data: {
-      patternId: string;
-      intentSummary: string;
-      estimatedItems: number;
-      matchCount: number;
-    }): void => {
-      console.log("[Chat] Received suggest-continuation event:", data);
-      setProactiveSuggestion(data);
-    };
-
-    console.log("[Chat] Setting up suggest-continuation listener");
-    window.sidebarAPI.pattern.onSuggestContinuation(handleSuggestContinuation);
-
-    return () => {
-      console.log("[Chat] Removing suggest-continuation listener");
-      window.sidebarAPI.pattern.removeSuggestContinuationListener();
-    };
-  }, []);
 
   // Story 1.14: Listen for execution progress updates
   useEffect(() => {
@@ -771,42 +734,6 @@ export const Chat: React.FC<ChatProps> = ({
               ))}
             </>
           )}
-
-          {/* Story 1.14: Proactive Automation Suggestion (AC 2, 3, 6) */}
-          {/* NOTE: Moved outside messages conditional to show even with empty chat */}
-          {/* TODO: Story 1.14 - ProactiveSuggestion component not implemented yet */}
-          {/* {proactiveSuggestion && (
-            <>
-              {(() => {
-                console.log(
-                  "[Chat] Rendering ProactiveSuggestion component",
-                  proactiveSuggestion,
-                );
-                return null;
-              })()}
-              <div className="pt-12">
-                <ProactiveSuggestion
-                  patternId={proactiveSuggestion.patternId}
-                  intentSummary={proactiveSuggestion.intentSummary}
-                  estimatedItems={proactiveSuggestion.estimatedItems}
-                  matchCount={proactiveSuggestion.matchCount}
-                  onDismiss={() => setProactiveSuggestion(null)}
-                  onStarted={() => {
-                    // Add starting message to chat
-                    const startMessage: Message = {
-                      id: `execution-start-${Date.now()}`,
-                      role: "assistant",
-                      content: `🚀 Starting automation... I'll keep you posted on the progress.`,
-                      timestamp: Date.now(),
-                    };
-                    setPatternMessages((prev) => [...prev, startMessage]);
-                    setProactiveSuggestion(null);
-                  }}
-                  onError={handlePatternError}
-                />
-              </div>
-            </>
-          )} */}
 
           {/* TODO: Story 1.14/1.16 - ProgressMessage component not implemented yet */}
           {/* {executionProgress && (

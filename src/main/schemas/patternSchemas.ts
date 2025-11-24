@@ -113,30 +113,6 @@ export const PasteEventSchema = z.object({
   tabId: z.string().transform(createTabId),
 });
 
-/**
- * Proactive suggestion schemas (Story 1.14)
- * Uses .transform() to return branded PatternId for type safety
- */
-export const SuggestContinuationSchema = z.object({
-  patternId: z
-    .string()
-    .min(1, { message: "Pattern ID is required" })
-    .transform(createPatternId),
-  intentSummary: z.string(),
-  estimatedItems: z.number().int().positive(),
-  matchCount: z.number().int().min(2),
-});
-
-export const StartContinuationSchema = z.object({
-  patternId: z
-    .string()
-    .min(1, { message: "Pattern ID is required" })
-    .transform(createPatternId),
-  itemCount: z.number().int().positive().max(100, {
-    message: "Item count must be at most 100",
-  }),
-});
-
 export const CancelExecutionSchema = z.object({
   executionId: z.string().min(1, { message: "Execution ID is required" }),
 });
@@ -229,20 +205,6 @@ export type PasteEventInput = Omit<
   "tabId"
 > & {
   tabId: TabId;
-};
-
-export type SuggestContinuationInput = Omit<
-  z.infer<typeof SuggestContinuationSchema>,
-  "patternId"
-> & {
-  patternId: PatternId;
-};
-
-export type StartContinuationInput = Omit<
-  z.infer<typeof StartContinuationSchema>,
-  "patternId"
-> & {
-  patternId: PatternId;
 };
 
 // CancelExecutionInput keeps executionId as string (not a domain ID type)

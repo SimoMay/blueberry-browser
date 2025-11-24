@@ -145,31 +145,8 @@ const sidebarAPI = {
       electronAPI.ipcRenderer.removeAllListeners("pattern:detected");
     },
 
-    // Story 1.14: Proactive Automation Suggestions
-    startContinuation: (data: { patternId: string; itemCount: number }) =>
-      electronAPI.ipcRenderer.invoke("pattern:start-continuation", data),
-
     cancelExecution: (data: { executionId: string }) =>
       electronAPI.ipcRenderer.invoke("pattern:cancel-execution", data),
-
-    onSuggestContinuation: (
-      callback: (data: {
-        patternId: string;
-        intentSummary: string;
-        estimatedItems: number;
-        matchCount: number;
-      }) => void,
-    ) => {
-      electronAPI.ipcRenderer.on("pattern:suggest-continuation", (_, data) =>
-        callback(data),
-      );
-    },
-
-    removeSuggestContinuationListener: () => {
-      electronAPI.ipcRenderer.removeAllListeners(
-        "pattern:suggest-continuation",
-      );
-    },
 
     onExecutionProgress: (
       callback: (data: {

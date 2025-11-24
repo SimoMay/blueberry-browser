@@ -23,7 +23,6 @@ import {
   SaveRecordingSchema,
 } from "./schemas/recordingSchemas";
 import {
-  StartContinuationSchema,
   CancelExecutionSchema,
   DismissPatternSchema,
   StartRefinementSchema,
@@ -770,77 +769,6 @@ export class EventManager {
 
         // Call PatternManager
         return await patternManager.trackCopyPaste(typedInput);
-      } catch (error) {
-        if (error instanceof z.ZodError) {
-          return {
-            success: false,
-            error: {
-              code: "VALIDATION_ERROR",
-              message: error.issues[0].message,
-            },
-          };
-        }
-        return {
-          success: false,
-          error: {
-            code: "UNKNOWN_ERROR",
-            message: error instanceof Error ? error.message : "Unknown error",
-          },
-        };
-      }
-    });
-
-    // Story 1.14: Start pattern continuation (proactive suggestion)
-    ipcMain.handle("pattern:start-continuation", async (_, data) => {
-      try {
-        // Rate limiting (10 requests/second)
-        if (!this.checkRateLimit("pattern:start-continuation", 10)) {
-          return {
-            success: false,
-            error: {
-              code: "RATE_LIMIT",
-              message: "Too many requests",
-            },
-          };
-        }
-
-        // Zod validation (returns branded PatternId via .transform())
-        const validated = StartContinuationSchema.parse(data);
-
-        // Get pattern data from PatternManager
-        const patternResult = await patternManager.getAllPatterns();
-        if (!patternResult.success || !patternResult.data) {
-          return {
-            success: false,
-            error: {
-              code: "PATTERN_NOT_FOUND",
-              message: "Pattern not found",
-            },
-          };
-        }
-
-        const pattern = patternResult.data.find(
-          (p) => p.id === validated.patternId,
-        );
-        if (!pattern) {
-          return {
-            success: false,
-            error: {
-              code: "PATTERN_NOT_FOUND",
-              message: "Pattern not found",
-            },
-          };
-        }
-
-        // TODO: Story 1.16 - LLM-guided execution not implemented yet
-        // Temporary error response until Story 1.16 is complete
-        return {
-          success: false,
-          error: {
-            code: "NOT_IMPLEMENTED",
-            message: "LLM-guided execution will be implemented in Story 1.16",
-          },
-        };
       } catch (error) {
         if (error instanceof z.ZodError) {
           return {
